@@ -5035,26 +5035,66 @@ function startNetworkSelection() {
   popup.dataset.lock = '1';            // drawBoard가 자동으로 닫지 않도록 잠금
 try { drawBoard(); } catch(e) {}
 }
-// 시작 화면(타이틀) 처리: 클릭하거나 Tab 키를 누르면 사라지고 원래 화면이 드러남
+// 시작 화면(타이틀) 처리
+// 1단계: 로고 이미지("Tab to start") → 클릭/Tab → 2단계
+// 2단계: 로고 없이 배경색만 남기고, 그 위에 오프라인/온라인 선택 버튼 표시
+//        → 버튼 선택 시 실제 모드 선택 로직(startNetworkSelection이 만든 팝업 버튼)을
+//          그대로 호출해서 로직 중복 없이 이어지게 하고, 화면을 완전히 제거함
 (function setupTitleScreen(){
   const titleScreen = document.getElementById('titleScreen');
   if (!titleScreen) return;
-  let dismissed = false;
-  function dismissTitleScreen(){
-    if (dismissed) return;
-    dismissed = true;
-    document.removeEventListener('keydown', onKeydown);
+  let stage = 1;
+
+  function removeTitleScreen(){
     titleScreen.style.transition = 'opacity 0.25s ease';
     titleScreen.style.opacity = '0';
     setTimeout(() => titleScreen.remove(), 250);
   }
+
+  function showModeChoiceScreen(){
+    if (stage !== 1) return;
+    stage = 2;
+    document.removeEventListener('keydown', onKeydown);
+    titleScreen.removeEventListener('click', onTitleClick);
+    titleScreen.classList.remove('cursor-pointer');
+    titleScreen.innerHTML = `
+      <div class="flex flex-col items-center gap-4">
+        <button id="titleOfflineBtn" type="button"
+          class="w-72 px-6 py-4 rounded-2xl bg-indigo-500 hover:bg-indigo-400 text-white text-xl font-bold shadow-lg transition">
+          오프라인
+        </button>
+        <button id="titleOnlineBtn" type="button"
+          class="w-72 px-6 py-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-black text-xl font-bold shadow-lg transition">
+          온라인
+        </button>
+      </div>
+    `;
+    // 실제 동작은 startNetworkSelection()이 이미 만들어 둔 팝업 버튼을 그대로 눌러서 위임
+    // (오프라인/온라인 진입 로직을 이곳에 중복 작성하지 않기 위함)
+    document.getElementById('titleOfflineBtn').addEventListener('click', () => {
+      choosePopupMode('오프라인');
+    });
+    document.getElementById('titleOnlineBtn').addEventListener('click', () => {
+      choosePopupMode('온라인');
+    });
+  }
+
+  function choosePopupMode(labelPrefix){
+    const btn = [...popup.querySelectorAll('button')].find(b => b.textContent.trim().startsWith(labelPrefix));
+    if (btn) btn.click();
+    removeTitleScreen();
+  }
+
+  function onTitleClick(){
+    showModeChoiceScreen();
+  }
   function onKeydown(e){
     if (e.key === 'Tab') {
-      e.preventDefault(); // 타이틀 화면에서는 Tab이 포커스 이동 대신 시작 역할을 함
-      dismissTitleScreen();
+      e.preventDefault(); // 타이틀 화면에서는 Tab이 포커스 이동 대신 다음 단계로 넘어가는 역할을 함
+      showModeChoiceScreen();
     }
   }
-  titleScreen.addEventListener('click', dismissTitleScreen);
+  titleScreen.addEventListener('click', onTitleClick);
   document.addEventListener('keydown', onKeydown);
 })();
 
