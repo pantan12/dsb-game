@@ -649,13 +649,16 @@ peer.on('error', (e) => {
   console.warn('Peer error:', e);
   if (e.type === 'peer-unavailable') {
     // 게스트가 호스트를 아직 못 찾은 경우: 호스트 쪽 Peer가 시그널링 서버에
-    // 등록되는 중일 수 있으므로 잠시 후 자동 재시도한다 (아직 연결된 적이 없을 때만).
-    if (!__iAmCreator && conns.size === 0 && __joinRetryCount < JOIN_MAX_RETRIES) {
+    // 등록되는 중일 수 있으므로 잠시 후 자동 재시도한다 (아직 실제로 연결된 적이 없을 때만).
+    // ※ conns는 peer.connect() 호출 즉시(성공 여부와 무관하게) 항목이 채워지므로
+    //   "연결 성공 여부"는 conns.size가 아니라 해당 연결의 open 상태로 판단해야 함.
+    const hostConnOpen = conns.get(`${roomCode}-host`)?.open;
+    if (!__iAmCreator && !hostConnOpen && __joinRetryCount < JOIN_MAX_RETRIES) {
       __joinRetryCount++;
       mpStatus.textContent = `${roomCode} · 방을 찾는 중... 재시도 (${__joinRetryCount}/${JOIN_MAX_RETRIES})`;
       setTimeout(() => {
         // 그 사이에 나가기 등으로 상태가 바뀌었으면 재시도하지 않음
-        if (online && !__iAmCreator && peer && !peer.destroyed && conns.size === 0) {
+        if (online && !__iAmCreator && peer && !peer.destroyed && !conns.get(`${roomCode}-host`)?.open) {
           attemptConnectToHost();
         }
       }, JOIN_RETRY_DELAY_MS);
