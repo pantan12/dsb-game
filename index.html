@@ -471,6 +471,10 @@ function randRoom(){
 let __joinRetryCount = 0;
 const JOIN_MAX_RETRIES = 5;
 const JOIN_RETRY_DELAY_MS = 1500;
+// 시그널링(방 찾기) 자체는 성공했는데 실제 WebRTC 데이터 채널이 끝내 열리지 않고
+// 아무 오류 이벤트도 없이 "연결 중..."에서 멈춰버리는 경우(네트워크/TURN 문제 등)를
+// 대비한 타임아웃. 이 시간 안에 안 열리면 실패로 간주하고 같은 재시도 루틴을 탄다.
+const JOIN_CONNECT_TIMEOUT_MS = 8000;
 // P2P (PeerJS)
 let online = false;
 let peer = null;          // 내 Peer
@@ -593,6 +597,31 @@ function attemptConnectToHost() {
   const conn = peer.connect(hostId, { reliable: true });
   setupConn(conn);
   mpStatus.textContent = `${roomCode} · 호스트에 연결 중...`;
+
+  // 시그널링은 통과했지만 데이터 채널이 끝내 안 열리는 경우(오류 이벤트 없이 멈춤)를 대비
+  const attemptRoomCode = roomCode;
+  setTimeout(() => {
+    if (!__iAmCreator && roomCode === attemptRoomCode && !conn.open) {
+      handleJoinAttemptFailed();
+    }
+  }, JOIN_CONNECT_TIMEOUT_MS);
+}
+// 방 찾기 실패(peer-unavailable) 또는 연결 타임아웃을 동일하게 처리:
+// 남은 횟수가 있으면 새 Peer로 재시도, 아니면 최종 실패 메시지 표시.
+function handleJoinAttemptFailed() {
+  if (conns.get(`${roomCode}-host`)?.open) return; // 그 사이 연결되었으면 무시
+  if (__joinRetryCount < JOIN_MAX_RETRIES) {
+    __joinRetryCount++;
+    const retryingRoomCode = roomCode;
+    mpStatus.textContent = `${roomCode} · 방을 찾는 중... 재시도 (${__joinRetryCount}/${JOIN_MAX_RETRIES})`;
+    setTimeout(() => {
+      if (online && !__iAmCreator && roomCode === retryingRoomCode && !conns.get(`${roomCode}-host`)?.open) {
+        createGuestPeer();
+      }
+    }, JOIN_RETRY_DELAY_MS);
+  } else {
+    mpStatus.textContent = `${roomCode} · 연결 실패: 방을 찾을 수 없습니다. 방 코드와 호스트 접속 상태를 확인해 주세요`;
+  }
 }
 // 게스트용 Peer를 (재)생성한다. 재시도할 때도 이 함수를 다시 호출해서
 // 완전히 새로운 Peer/연결 객체로 시작한다 — 실패했던 기존 Peer에 대고
@@ -655,21 +684,8 @@ peer.on('error', (e) => {
   if (e.type === 'peer-unavailable') {
     // 게스트가 호스트를 아직 못 찾은 경우: 호스트 쪽 Peer가 시그널링 서버에
     // 등록되는 중일 수 있으므로 잠시 후 자동 재시도한다 (아직 실제로 연결된 적이 없을 때만).
-    // ※ conns는 peer.connect() 호출 즉시(성공 여부와 무관하게) 항목이 채워지므로
-    //   "연결 성공 여부"는 conns.size가 아니라 해당 연결의 open 상태로 판단해야 함.
-    const hostConnOpen = conns.get(`${roomCode}-host`)?.open;
-    if (!__iAmCreator && !hostConnOpen && __joinRetryCount < JOIN_MAX_RETRIES) {
-      __joinRetryCount++;
-      const retryingRoomCode = roomCode;
-      mpStatus.textContent = `${roomCode} · 방을 찾는 중... 재시도 (${__joinRetryCount}/${JOIN_MAX_RETRIES})`;
-      setTimeout(() => {
-        // 그 사이에 나가기/다른 방 입장 등으로 상태가 바뀌었으면 재시도하지 않음
-        if (online && !__iAmCreator && roomCode === retryingRoomCode && !conns.get(`${roomCode}-host`)?.open) {
-          createGuestPeer();
-        }
-      }, JOIN_RETRY_DELAY_MS);
-    } else {
-      mpStatus.textContent = `${roomCode} · 연결 실패: 방을 찾을 수 없습니다. 방 코드와 호스트 접속 상태를 확인해 주세요`;
+    if (!__iAmCreator) {
+      handleJoinAttemptFailed();
     }
   } else if (e.type === 'network') {
     mpStatus.textContent = `${roomCode} · 네트워크 오류`;
