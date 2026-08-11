@@ -1,0 +1,5749 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>다수가 승리하는 법</title>
+  <script>
+  tailwind.config = {
+    safelist: [
+      'bg-red-600','bg-yellow-400','bg-blue-600','bg-green-600',
+      'ring-pink-400',
+      'bg-red-500','bg-green-500','bg-blue-500','bg-white','bg-purple-500'
+    ]
+  }
+</script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+  /* === 반응형 셀 크기 & 스크롤 가능 래퍼 === */
+:root { --cell: 4rem; }                 /* 기본 PC 셀 크기 */
+#board { 
+  display: grid; 
+  grid-template-columns: repeat(14, var(--cell));
+  grid-template-rows:    repeat(14, var(--cell));
+  gap: 0.25rem; 
+}
+#boardWrapper{
+  overflow-x: auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  /* ✨ 포인터 제스처 충돌 방지: 드래그 스크롤 스크립트가 제어 */
+  touch-action: pan-x pan-y;
+
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+
+  max-width: 100vw;
+  max-height: calc(100vh - 200px);
+  flex: 1 1 auto;
+  min-height: 0;
+
+  padding: 0.5rem;
+}
+#boardWrapper { position: relative; }
+@media (max-width: 640px){
+  :root { --cell: 2.5rem; }            /* 모바일 셀 크기 축소 */
+}
+/* 하단 고정 HUD가 상태 텍스트를 가리지 않도록 본문 하단 여백 확보 */
+body { padding-bottom: 4.5rem; }
+@media (max-width: 640px){
+  body { padding-bottom: 3.5rem; }
+}
+/* ===== HUD: 모바일 컴팩트 + 접기 ===== */
+#hudBar { transition: transform .25s ease; }
+
+/* UI 숨김 토글 시: HUD만 하단으로 살짝 접어서 보드가 더 내려오도록 */
+.ui-hidden #hudBar {
+  transform: translateY(calc(100% - 40px));  /* 40px 만큼만 손잡이처럼 남김 */
+}
+
+/* 모바일에서 버튼/여백 축소 */
+@media (max-width: 640px){
+  #hudBar .mx-auto { padding-left: 0.5rem; padding-right: 0.5rem; }
+  #hudBar .px-3.py-2 { padding: 0.375rem 0.5rem; } /* 버튼 컴팩트 */
+  #hudBar button { font-size: 0.75rem; }           /* 글자도 살짝 줄임 */
+  /* iOS 안전영역 */
+  #hudBar { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
+}
+#popup{
+  position: fixed;                 /* 화면 기준 배치 */
+  z-index: 50;
+  max-width: min(90vw, 28rem);
+  word-break: keep-all;
+
+  /* 가독성 강화 */
+  background: rgba(255,255,255,0.98);  /* 밝은 배경 */
+  color: #111;                         /* 기본 글자색: 진회색(검정에 가까움) */
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(0,0,0,0.1);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+}
+
+/* 팝업 내부 버튼/텍스트도 일괄 가독성 보장 */
+#popup * { color: #111; } /* body의 text-white보다 우선(ID 선택자) */
+#popup button{
+  background: #fff;
+  border: 1px solid #e5e7eb;      /* gray-200 */
+  border-radius: 0.375rem;
+}
+#popup button:hover{
+  background: #e5e7eb;            /* hover:bg-gray-200와 동일 톤 */
+}
+#board { margin: 0 auto; }
+/* UI 숨김 모드 */
+.ui-hidden #netBar,
+.ui-hidden #teamBar {
+  display: none !important;
+}
+/* 모바일에서 상단 바 자동 축소(접힌 높이) */
+@media (max-width: 640px){
+  #netBar, #teamBar {
+    max-height: 28vh;
+    overflow: auto;
+  }
+}
+@media (max-width: 640px){
+  #hudBar .mx-auto { padding-left: 0.5rem; padding-right: 0.5rem; }
+  #hudBar .px-3.py-2 { padding: 0.375rem 0.5rem; } /* 버튼 컴팩트 */
+  #hudBar button { font-size: 0.75rem; }           /* 글자도 살짝 줄임 */
+  /* iOS 안전영역 */
+  #hudBar { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
+  /* ★ 여기에 추가 ↓ */
+  #toggleUiBtn, #skillMenuBtn {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+  }
+  #turnDisplay {
+    font-size: 1rem;
+  }
+}
+/* 상단 고정 안내 배너: 패배/승리/상인 거래 결과 등 (기존엔 스타일이 없어 하단 HUD에 가려지거나 눈에 띄지 않았음) */
+#defeatMsg {
+  display: none;
+  position: fixed;
+  top: 5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  max-width: 90vw;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.05rem;
+  text-align: center;
+  padding: 0.75rem 1.25rem;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+#skillPopup {
+  position: fixed;
+  z-index: 60;  /* popup보다 높게 */
+  max-width: min(90vw, 40rem);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: rgba(139, 92, 246, 0.98);  /* 보라색 배경 */
+  color: white;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  border: 2px solid rgba(167, 139, 250, 0.8);
+  box-shadow: 0 20px 40px rgba(139, 92, 246, 0.6);
+}
+#evoPopup {
+  position: fixed;
+  z-index: 60;  /* skillPopup와 동일 레벨 */
+  max-width: min(90vw, 40rem);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: rgba(139, 92, 246, 0.98);  /* 보라색 배경 */
+  color: white;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  border: 2px solid rgba(167, 139, 250, 0.8);
+  box-shadow: 0 20px 40px rgba(139, 92, 246, 0.6);
+}
+
+#evoPopup button {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: white;
+  transition: all 0.2s;
+}
+
+#evoPopup button:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+#evoPopup button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+#skillPopup button {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: white;
+  transition: all 0.2s;
+}
+
+#skillPopup button:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+#skillPopup button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.snowball-icon { pointer-events: none; }
+
+/* 왼쪽 빈 공간: 현재 차례의 사용 가능 액티브 스킬 / 발동 중인 패시브 표시 */
+#turnSkillPanel {
+  position: fixed;
+  left: 0.75rem;
+  top: 6rem;
+  width: 15.5rem;
+  max-height: calc(100vh - 10rem);
+  overflow-y: auto;
+  background: rgba(17, 24, 39, 0.92);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  z-index: 30;
+}
+#turnSkillPanel .tsp-title {
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+#turnSkillPanel .tsp-section {
+  font-weight: 600;
+  margin-top: 0.6rem;
+  margin-bottom: 0.25rem;
+}
+#turnSkillPanel .tsp-empty { color: #9ca3af; }
+/* 보드 옆 여유 공간이 없는 화면에서는 보드를 가리지 않도록 숨김 */
+@media (max-width: 1180px){
+  #turnSkillPanel { display: none; }
+}
+
+</style>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center h-screen relative">
+  <h1 class="text-3xl font-bold mb-4">다수가 승리하는 법</h1>
+  <!-- ★ 추가: 버튼과 턴 표시를 한 줄로 -->
+  <div class="flex items-center justify-center gap-2 mb-4">
+    <button id="toggleUiBtn" class="px-2 py-1 rounded bg-gray-800 border border-gray-600 text-sm">
+      UI 숨기기
+    </button>
+    <div id="turnDisplay" class="text-xl font-bold">턴: 1</div>
+    <button id="skillMenuBtn" class="px-2 py-1 rounded bg-purple-600 text-white text-sm">
+      스킬창
+    </button>
+    <button id="evoMenuBtn" class="px-2 py-1 rounded bg-amber-500 text-black text-sm">
+  진화창
+</button>
+  </div>
+  <div id="scoreBoard" class="mb-4 flex items-center justify-center gap-4 text-sm font-bold"></div>
+  <!-- 모드 선택 바 -->
+<div id="netBar" class="w-full max-w-5xl mx-auto mb-2 grid grid-cols-1 lg:grid-cols-3 gap-2">
+  <div class="col-span-2 rounded-lg border border-gray-700 p-3">
+    <div class="flex items-center justify-between">
+      <div class="font-semibold">온라인/오프라인</div>
+      <div id="mpStatus" class="text-sm text-gray-300">오프라인</div>
+    </div>
+    <div class="mt-2 grid grid-cols-2 md:grid-cols-6 gap-2">
+      <input id="nameInput" class="col-span-2 px-2 py-1 rounded bg-gray-800 border border-gray-600" placeholder="닉네임">
+      <input id="roomInput" class="col-span-2 px-2 py-1 rounded bg-gray-800 border border-gray-600 font-mono" placeholder="방 코드(예: ABC123)">
+      <button id="createRoomBtn" class="px-2 py-1 rounded bg-indigo-500 text-white">방 만들기</button>
+      <button id="joinRoomBtn" class="px-2 py-1 rounded border border-gray-600">입장</button>
+      <button id="startOnlineBtn" class="px-2 py-1 rounded bg-emerald-500 text-black" disabled title="호스트만 시작할 수 있습니다">온라인 시작(호스트)</button>
+      <button id="leaveRoomBtn" class="px-2 py-1 rounded border border-gray-600">나가기</button>
+    </div>
+    <p class="mt-2 text-xs text-gray-400">※ 온라인: 각 디바이스에서 본인 차례에만 조작 가능. 오프라인: 현재처럼 한 기기에서 진행.</p>
+  </div>
+  <div class="rounded-lg border border-gray-700 p-3">
+    <div class="font-semibold mb-1">모드 선택</div>
+    <div class="grid grid-cols-2 gap-2">
+      <button id="localModeBtn" class="px-2 py-1 rounded bg-gray-700">오프라인</button>
+      <button id="onlineModeBtn" class="px-2 py-1 rounded bg-gray-700">온라인</button>
+    </div>
+  </div>
+</div>
+<!-- 팀 배정 바 -->
+<div id="teamBar" class="w-full max-w-5xl mx-auto mb-2 rounded-lg border border-gray-700 p-3">
+  <div class="flex items-center justify-between">
+    <div class="font-semibold">팀 배정</div>
+    <div class="text-sm text-gray-300">내 PeerID: <span id="myPeerIdLabel">-</span></div>
+  </div>
+  <div id="teamSlots" class="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2"></div>
+  <p class="mt-2 text-xs text-gray-400">※ 본인 팀을 선택해야 해당 팀 차례에만 조작 가능</p>
+</div>
+  <div id="popup"></div>
+  <div id="turnSkillPanel"></div>
+<!-- 보드 영역 -->
+<div id="boardWrapper" class="w-full max-w-5xl mx-auto">
+  <div id="board"></div>
+</div>
+<div id="skillPopup" style="display: none;"></div>
+<div id="evoPopup" style="display:none;"></div>
+<div class="mt-4 flex items-center justify-center gap-2">
+  <p id="status" class="text-xl"></p>
+  <span id="cartLinkIndicator" class="text-base font-semibold text-amber-300"></span>
+</div>
+  <!-- 고정 HUD 바 -->
+<div id="hudBar" class="fixed left-0 right-0 bottom-0 bg-black border-t border-gray-700 text-white">
+  <div class="max-w-5xl mx-auto px-3 py-2 flex items-center justify-between gap-3">
+    <div class="flex items-center gap-2">
+      <button id="diceBtn" class="px-3 py-2 rounded bg-emerald-500 text-black font-bold">🎲 주사위 굴리기</button>
+      <button id="endTurnBtn" class="px-3 py-2 rounded bg-rose-500 text-white font-bold">차례 넘기기</button>
+      <button id="surrenderBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold">항복</button>
+      <button id="undoBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold">되돌리기</button>
+      <button id="deselectBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold">선택 해제</button>
+    </div>
+    <div class="flex items-center gap-4 font-semibold">
+      <span id="diceResult"> </span>
+      <span id="moveEnergyDisplay">남은 이동 에너지: 0</span>
+    </div>
+  </div>
+</div>
+<div id="defeatMsg"></div>
+  <script>
+    // ============ ONLINE CORE ============
+let app = null, db = null;
+let isHost = false;
+let myNick = localStorage.getItem('multi_nick') || '';
+  const nickMap = new Map();             // peerId -> nickname
+  function getMyNick() {
+    const v = (nameInput?.value?.trim?.() || myNick || '');
+    return v || '플레이어';
+  }
+let myId = localStorage.getItem('multi_myId') || Math.random().toString(36).slice(2,10);
+localStorage.setItem('multi_myId', myId);
+let roomId = null;
+let roomRef = null;
+let roomUnsub = null;
+const teamSlots = document.getElementById('teamSlots');
+const myPeerIdLabel = document.getElementById('myPeerIdLabel');
+const bishopDash = { active: false, unitId: null }; // 비숍 스킬 모드
+// 비숍 대각선 질주: 현재 이동 가능한 칸 목록(첫 점유 칸까지 포함, 그 이후는 불가)
+function getBishopDashReachableCells(unit) {
+  const cells = [];
+  const dirs = [[1,1],[1,-1],[-1,1],[-1,-1]];
+  for (const [dx, dy] of dirs) {
+    let cx = unit.x + dx, cy = unit.y + dy;
+    while (cx >= 0 && cx < size && cy >= 0 && cy < size) {
+      if (typeof isEnteringEnemyFrog === 'function' &&
+          isEnteringEnemyFrog(unit.x, unit.y, cx, cy, unit.team)) break;
+      cells.push({ x: cx, y: cy });
+      if (typeof cellOccupied === 'function' && cellOccupied(cx, cy)) break;
+      cx += dx; cy += dy;
+    }
+  }
+  return cells;
+}
+function renderTeamSlots(){
+  if (!teamSlots) return;
+  teamSlots.innerHTML = '';
+  for (const t of [0,1,2,3]) {
+    const owner = owners?.[String(t)] || null;
+    const mine  = owner && myPeerId && owner === myPeerId;
+    const label = owner
+  ? (owner === myPeerId ? '나' : (nickMap.get(owner) || owner.slice(0,6)))
+  : '비어있음';
+    const btn = document.createElement('button');
+    btn.className = `px-3 py-2 rounded border ${mine ? 'bg-emerald-500 text-black' : 'bg-gray-700 text-white'} w-full`;
+    btn.textContent = `팀 ${t+1} • ${label}`;
+    btn.onclick = ()=>{
+  if (!online || !myPeerId) { alert('온라인 연결 후 이용하세요'); return; }
+  if (!owners) owners = {};
+
+  // 내가 이미 다른 팀을 점유 중인데, 그 팀이 아닌 곳을 누르면 거부
+  if (owners[String(t)] !== myPeerId && ownsAnotherTeam(myPeerId, t)) {
+    alert('한 기기에서는 한 팀만 점유할 수 있습니다. 먼저 기존 팀 점유를 해제하세요.');
+    return;
+  }
+
+  // 동일 팀이면 토글(해제), 아니면 점유
+  if (owners[String(t)] === myPeerId) {
+    owners[String(t)] = null;
+  } else {
+    // 누군가 쓰고 있으면 점유 불가
+    if (owners[String(t)] && owners[String(t)] !== myPeerId) {
+      alert('이미 다른 사용자가 점유 중입니다');
+      return;
+    }
+    owners[String(t)] = myPeerId;
+  }
+
+  // 안전장치: 단일팀 규칙 유지
+  enforceSingleTeamOwnership();
+
+  // 브로드캐스트 및 UI 갱신
+  broadcast({ t:'OWNERS', owners });
+  renderTeamSlots();
+};
+
+    teamSlots.appendChild(btn);
+  }
+}
+function showTeamClaimUIForDraft() {
+  popup.innerHTML = '<p class="font-bold mb-2">팀 배정이 필요합니다</p>';
+
+  const alive = getAliveTeams();
+  const list = document.createElement('div');
+
+  alive.forEach(t => {
+    const taken = owners && owners[String(t)];
+    const label = taken ? `팀 ${t+1} (점유됨)` : `팀 ${t+1} (선택 가능)`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = `block w-full text-left px-3 py-2 rounded mb-1 ${taken ? 'bg-gray-700 text-gray-300 cursor-not-allowed' : 'hover:bg-gray-200 hover:text-black'}`;
+    btn.textContent = label;
+    btn.disabled = !!taken;
+    btn.onclick = () => {
+  if (!online || !myPeerId) return;
+  if (!owners) owners = {};
+  if (owners[String(t)]) return;
+
+  // 이미 다른 팀을 가진 경우 거부
+  if (ownsAnotherTeam(myPeerId, t)) {
+    alert('한 기기에서는 한 팀만 점유할 수 있습니다. 먼저 기존 팀을 해제하세요.');
+    return;
+  }
+
+  owners[String(t)] = myPeerId;
+  enforceSingleTeamOwnership();
+  renderTeamSlots?.();
+  if (online) {
+    try { broadcast({ t:'OWNERS', owners }); } catch(e){}
+    try { broadcast({ t:'SYNC', state: toRoomState(), hash: hashState() }); } catch(e){}
+  }
+  renderSpecialDraft();
+};
+
+
+    list.appendChild(btn);
+  });
+
+  if (alive.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'text-sm text-gray-400';
+    p.textContent = '선택 가능한 팀이 없습니다. 호스트가 팀을 정해 주세요.';
+    popup.appendChild(p);
+  } else {
+    popup.appendChild(list);
+  }
+
+  popup.style.display = 'block';
+  popup.style.left = '50%';
+  popup.style.top = '50%';
+  popup.style.transform = 'translate(-50%, -50%)';
+  try { popup.dataset.lock = '1'; } catch(e){}
+  try { popup.dataset.lock = '1'; } catch(e){}
+}
+setTimeout(renderTeamSlots, 0);
+const mpStatus = document.getElementById('mpStatus');
+const nameInput = document.getElementById('nameInput');
+const roomInput = document.getElementById('roomInput');
+const createRoomBtn = document.getElementById('createRoomBtn');
+const joinRoomBtn = document.getElementById('joinRoomBtn');
+const startOnlineBtn = document.getElementById('startOnlineBtn');
+const leaveRoomBtn = document.getElementById('leaveRoomBtn');
+const localModeBtn = document.getElementById('localModeBtn');
+const onlineModeBtn = document.getElementById('onlineModeBtn');
+
+function randRoom(){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s=''; for(let i=0;i<6;i++) s += chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+// P2P (PeerJS)
+let online = false;
+let peer = null;          // 내 Peer
+let myPeerId = null;
+// ▼ 호스트(방 생성자) 고정용
+let __hostId = null;      // 방의 호스트 PeerID
+let __iAmCreator = false; // 내가 방을 '생성'했는지 여부
+let roomCode = null;      // 방 코드(호스트/게스트 공통 사용)
+const conns = new Map();  // peerId -> DataConnection
+
+// 드래프트 준비 신호(온라인 동시 드래프트용)
+const draftSignals = {
+  peersReady: new Set(),  // 준비 완료 신호를 보낸 peerId 집합
+  finalized: false        // 중복 확정 방지
+};
+function draftWaitingMessage() {
+  const total = connectedPeerCount();
+  const done = draftSignals.peersReady.size;
+  return `다른 플레이어의 선택을 기다리고 있습니다… (${done} / ${total})`;
+}
+function updateDraftWaitingStatus() {
+  if (!specialDraft?.active) return;
+  if (draftSignals.peersReady.has(myPeerId)) {
+    status && (status.textContent = draftWaitingMessage());
+  }
+}
+
+let owners = {}; // 예: { "0": "peerA", "1": "peerB", ... }
+// 상태 동기화 충돌 방지용 버전(신규)
+let __stateVersion = 0;
+
+function ownsAnotherTeam(peerId, exceptTeam = null){
+  if (!owners) return false;
+  for (const [k, v] of Object.entries(owners)) {
+    if (v === peerId && String(k) !== String(exceptTeam)) return true;
+  }
+  return false;
+}
+function enforceSingleTeamOwnership(){
+  if (!owners) return;
+  const seen = new Set();
+  for (const k of Object.keys(owners)) {
+    const pid = owners[k];
+    if (!pid) continue;
+    if (seen.has(pid)) {
+      owners[k] = null;       // 같은 피어가 이미 다른 팀을 점유 중이면 해제
+    } else {
+      seen.add(pid);
+    }
+  }
+}
+
+function anchorId() {
+  return [...conns.keys()].concat(myPeerId).sort()[0];
+}
+function isAnchor() {
+  try { return myPeerId && (myPeerId === anchorId()); }
+  catch(e){ return false; }
+}
+function updateStartBtnLock() {
+  if (!startOnlineBtn) return;
+  const ok = !!(myPeerId && __hostId && myPeerId === __hostId);
+  startOnlineBtn.disabled = !ok;
+  startOnlineBtn.title = ok ? '' : '호스트만 시작할 수 있습니다';
+}
+// 엔진 검증용 해시(아주 단순 MD5 대용으로 JSON 문자열 해시)
+function hashState() {
+  const s = JSON.stringify({
+    players, currentTurn, currentRound, snowballs
+  });
+  let h = 0; for (let i=0;i<s.length;i++) { h = (h*31 + s.charCodeAt(i))|0; }
+  return (h >>> 0).toString(16);
+}
+// 방을 새로 만들거나 입장하기 전, 이전에 남아있던 Peer/연결을 정리한다.
+// (정리하지 않으면 이전 Peer 객체의 이벤트 핸들러가 살아남아 myPeerId/__hostId 등
+//  전역 상태를 뒤늦게 덮어써서 "게임 시작"이 먹통이 되는 것처럼 보이는 원인이 됨)
+function resetPeerConnection() {
+  try { peer?.removeAllListeners?.(); } catch(e){}
+  try { peer?.destroy(); } catch(e){}
+  peer = null;
+  conns.clear();
+  __hostId = null;
+  myPeerId = null;
+  updateStartBtnLock();
+}
+async function p2pCreateRoom() {
+  resetPeerConnection();
+  roomCode = (roomInput.value.trim().toUpperCase()) || randRoom();
+  __iAmCreator = true;
+
+  // 호스트는 고정된 패턴의 ID 사용 (다른 참가자들이 찾을 수 있도록)
+  peer = new Peer(`${roomCode}-host`);
+  wirePeerEvents();
+  online = true;
+  mpStatus.textContent = `${roomCode} · 생성 중...`;
+
+  // 방 코드를 input에 표시
+  roomInput.value = roomCode;
+
+  updateStartBtnLock();
+}
+async function p2pJoinRoom() {
+  const code = roomInput.value.trim().toUpperCase();
+  if (!code) {
+    alert('방 코드를 입력하세요');
+    return;
+  }
+  resetPeerConnection();
+  roomCode = code;
+  __iAmCreator = false;
+
+  // 게스트용 Peer 생성
+  peer = new Peer(`${roomCode}-guest-${Math.random().toString(36).slice(2,6)}`);
+  wirePeerEvents();
+  online = true;
+  mpStatus.textContent = `${roomCode} · 입장 시도 중...`;
+
+  updateStartBtnLock();
+}
+function wirePeerEvents() {
+  peer.on('open', (id) => {
+    myPeerId = id;
+    if (myPeerIdLabel) myPeerIdLabel.textContent = id;
+
+    myNick = getMyNick();
+    localStorage.setItem('multi_nick', myNick);
+    nickMap.set(myPeerId, myNick);
+
+    mpStatus.textContent = roomCode ? `${roomCode} · ${myNick}` : `${myNick}`;
+    
+    // 내가 방을 만들었다면 호스트로 확정
+    if (__iAmCreator) {
+      __hostId = myPeerId;
+      broadcast({ t:'HOST', hostId: __hostId });
+      mpStatus.textContent = `${roomCode} · 방 생성 완료 (호스트)`;
+    } else {
+      // 게스트라면 호스트에게 연결 시도
+      const hostId = `${roomCode}-host`;
+      const conn = peer.connect(hostId, { reliable: true });
+      setupConn(conn);
+      mpStatus.textContent = `${roomCode} · 호스트에 연결 중...`;
+    }
+    
+    // 내 닉네임과 현재 연결된 피어 목록 전송
+    broadcast({ t: 'HELLO', from: myPeerId, nick: myNick, peers: Array.from(conns.keys()) });
+    updateDraftWaitingStatus();
+
+    updateStartBtnLock();
+  });  
+  peer.on('connection', (conn) => {
+    setupConn(conn);
+    updateStartBtnLock();
+updateDraftWaitingStatus();
+
+  });
+peer.on('disconnected', () => {
+  console.log('Peer disconnected');
+  if (!peer.destroyed) {
+    try {
+      peer.reconnect();
+    } catch(e) {
+      console.warn('Reconnect failed:', e);
+    }
+  }
+  pruneOwnersForConnectedPeers();
+  updateDraftWaitingStatus();
+
+});
+
+peer.on('error', (e) => {
+  console.warn('Peer error:', e);
+  if (e.type === 'peer-unavailable') {
+    mpStatus.textContent = `${roomCode} · 연결 실패: 방을 찾을 수 없습니다`;
+  } else if (e.type === 'network') {
+    mpStatus.textContent = `${roomCode} · 네트워크 오류`;
+  } else if (e.type === 'unavailable-id') {
+    mpStatus.textContent = `${roomCode} · 이미 사용 중인 방 코드입니다. 다른 코드로 다시 만들어 주세요`;
+  } else {
+    mpStatus.textContent = `${roomCode} · 오류: ${e.type}`;
+  }
+  updateStartBtnLock();
+});
+}
+function connectTo(hostPeerId) {
+  const conn = peer.connect(hostPeerId, { reliable: true });
+  setupConn(conn);
+}
+function setupConn(conn) {
+  conns.set(conn.peer, conn);
+  
+  conn.on('open', () => {
+    conn.send({ t: 'HELLO', from: myPeerId, nick: getMyNick(), peers: Array.from(conns.keys()) });
+    conn.send({ t: 'ASK_SYNC', from: myPeerId });
+    
+    if (__hostId) conn.send({ t:'HOST', hostId: __hostId });
+    
+    mpStatus.textContent = `${roomCode} · 연결됨 (총 ${conns.size + 1}명)`;
+  });
+  
+  conn.on('data', (data) => {
+    onNetMsg(data);
+  });
+  
+  conn.on('close', () => {
+  conns.delete(conn.peer);
+  nickMap.delete(conn.peer);
+
+  // 해당 피어가 맡고 있던 팀 소유권 제거
+  if (owners) {
+    let changed = false;
+    for (const k of Object.keys(owners)) {
+      if (owners[k] === conn.peer) {
+        owners[k] = null;
+        changed = true;
+      }
+    }
+    if (changed && online && myPeerId === anchorId()) {
+      broadcast({ t: 'OWNERS', owners });
+    }
+  }
+
+  // 드래프트 “준비됨” 신호에서도 제거
+  try { draftSignals?.peersReady?.delete?.(conn.peer); } catch(e) {}
+
+  // 남아있는 연결 기준으로 한 번 더 정리
+  pruneOwnersForConnectedPeers();
+
+  mpStatus.textContent = `${roomCode} · 연결됨 (총 ${conns.size + 1}명)`;
+  updateDraftWaitingStatus();
+
+});  
+  conn.on('error', (e) => {
+  console.warn('Connection error:', e);
+  conns.delete(conn.peer);
+  nickMap.delete(conn.peer);
+  try { draftSignals?.peersReady?.delete?.(conn.peer); } catch(_) {}
+  pruneOwnersForConnectedPeers();
+});
+
+}
+function autoAssignOwnerFor(peerId){
+  if (!owners) owners = {};
+  const taken = new Set(Object.values(owners));
+  if (!Object.values(owners).includes(peerId)) {
+    for (const t of [0,1,2,3]) {
+      if (!owners[String(t)]) { owners[String(t)] = peerId; break; }
+    }
+  }
+}
+function broadcast(msg) {
+  for (const c of conns.values()) {
+    if (c && c.open) {
+      try {
+        c.send(msg);
+      } catch(e) {
+        console.warn('Broadcast error:', e);
+      }
+    }
+  }
+}
+// 최근 스냅샷 보관용(구독 시 저장)
+let __lastRoomSnap = null;
+function awaitGetIsMyTurn() {
+  if (!online) return true;
+  if (!myPeerId) return false;
+  if (!owners || !owners[String(currentTurn)]) return false;
+  return owners[String(currentTurn)] === myPeerId;
+}
+function makeAction(type, payload={}) {
+  return {
+    t: 'ACTION',
+    from: myPeerId,
+    turn: currentTurn,
+    round: currentRound,
+    pre: hashState(),        // 적용 전 해시
+    type, payload,
+    id: Date.now() + '-' + Math.random().toString(36).slice(2,6)
+  };
+}
+// 모바일 판별(화면폭 또는 UA)
+function isMobile() {
+  try {
+    return window.matchMedia('(max-width: 640px)').matches ||
+           /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  } catch(e) {
+    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  }
+}
+function shouldHideUnitForMe(u){
+  if (!u) return false;
+  if (typeof isCastle === 'function' && isCastle(u)) return false;
+  // 내가 방금 배치한 말은 예외적으로 항상 보이게
+  if (justPlacedIds.has(u.id)) return false;
+
+  // 온라인 + 배치중일 때 가림 조건 (모바일 여부 무관)
+  if (online && deploy?.active) {
+    // 소유자/내ID 동기화 전: 모두 보이게
+    if (!owners || !myPeerId) return false;
+
+    // 내 팀만 보이게
+    const mine = owners[String(u.team)] === myPeerId;
+    return !mine;
+  }
+  return false;
+}
+function sendAndApply(action, applyFn) {
+  // ① 로컬 검증: 내 차례 + 내가 그 팀 소유자인지
+  if (!awaitGetIsMyTurn()) { status.textContent='내 차례가 아닙니다'; return; }
+
+  // ② 로컬 즉시 적용
+  applyFn();
+
+  // ③ post 해시
+  action.post = hashState();
+
+  // ④ 브로드캐스트
+  broadcast(action);
+}
+function applyRemoteAction(msg) {
+  // ① 차례/소유자 검증
+  if (owners[String(currentTurn)] !== msg.from) return;       // 보낸 사람이 소유자 아님
+  if (msg.turn !== currentTurn || msg.round !== currentRound) return; // 턴 불일치
+
+  // ② 사전 상태 해시 비교(낙관적): 다르면 스냅샷 요청
+  const nowHash = hashState();
+  if (nowHash !== msg.pre) {
+    // 내 상태가 비틀린 것 → 싱크 받자
+    broadcast({ t: 'ASK_SYNC', from: myPeerId });
+    return;
+  }
+
+  // ③ 타입별로 같은 로직 재현(결정적이어야 함)
+  switch (msg.type) {
+    case 'ROLL': 
+    // 원격에서 받은 주사위 결과를 그대로 적용
+    if (msg.payload && typeof msg.payload.result === 'number') {
+      applyRoll(msg.payload.result);
+    }
+    break;
+    case 'MOVE': handleRemoteMove(msg.payload); break;
+    case 'SKILL': handleRemoteSkill(msg.payload); break;
+    case 'ENDTURN': endTurn(); break;
+  }
+
+  // ④ 사후 해시 검증 (선택): 다르면 재싱크
+  const after = hashState();
+  if (after !== msg.post) {
+    broadcast({ t:'ASK_SYNC', from: myPeerId });
+  }
+}
+function handleRemoteSkill(payload){
+  if (!payload || !payload.kind) return;
+
+  // ① 특수 드래프트 선택 (SIMUL 모드 대응)
+  if (payload.kind === 'DRAFT_PICK') {
+    if (!specialDraft?.active) return;
+
+    const team = payload.team;                    // ★ 원격에서 보낸 실제 팀
+    if (team == null) return;
+
+    // 온라인: 보낸 사람이 해당 팀 소유자여야 함
+    if (online && owners?.[String(team)] && owners[String(team)] !== payload.from) return;
+
+    // 이미 4개 채웠으면 무시
+    if ((specialDraft.chosenCount?.[team] ?? 0) >= 4) return;
+
+    // 유효 유닛인지 확인 (해당 팀 + 특수 병사)
+    const u = players.find(p => p.id === payload.unitId && p.team === team && isSpecialUnit(p));
+    if (!u) return;
+
+    // 토글(선택/해제) 지원
+    const wasChosen = specialDraft.chosenIds.has(u.id);
+    const wantChoose = payload.toggle ? !wasChosen : true;
+
+    if (wantChoose && !wasChosen) {
+      specialDraft.chosenIds.add(u.id);
+      specialDraft.chosenCount[team] = (specialDraft.chosenCount[team] || 0) + 1;
+    } else if (!wantChoose && wasChosen) {
+      specialDraft.chosenIds.delete(u.id);
+      specialDraft.chosenCount[team] = Math.max(0, (specialDraft.chosenCount[team] || 0) - 1);
+    }
+
+    renderSpecialDraft();
+    if (online && myPeerId === anchorId()) {
+      const state = toRoomState();
+      broadcast({ t: 'SYNC', state, hash: hashState() });
+    }
+    return;
+  }
+  if (payload.kind === 'DEPLOY_PLACE') {
+    if (!deploy?.active) return;
+    const team = payload.team;
+    if (owners?.[String(team)] !== payload.from) return;
+
+    const start = deploy.startPos.get(team);
+    if (!start) return;
+
+    const q = deploy.queueByTeam.get(team) || [];
+    const u = q[0];
+    if (!u || u.id !== payload.unitId) return;
+
+    u.x = payload.x; u.y = payload.y;
+    markJustPlaced(u.id);  // ⬅️ 이 줄 추가
+    q.shift();
+    deploy.queueByTeam.set(team, q);
+    drawBoard();
+
+    if (q.length === 0) advanceDeployTeam();
+    if (online && myPeerId === anchorId()) {
+      const state = toRoomState();
+      broadcast({ t: 'SYNC', state, hash: hashState() });
+    }
+    return;
+  }
+}
+    const board = document.getElementById('board');
+    const status = document.getElementById('status');
+    const cartLinkIndicator = document.getElementById('cartLinkIndicator');
+    const turnDisplay = document.getElementById('turnDisplay');
+    const popup = document.getElementById('popup');
+const skillPopup = document.getElementById('skillPopup');  // ★ 추가
+const evoPopup = document.getElementById('evoPopup');
+const evoMenuBtn = document.getElementById('evoMenuBtn');
+const skillMenuBtn = document.getElementById('skillMenuBtn');  // ★ 추가
+    const justPlacedIds = new Set();
+    function markJustPlaced(id){
+  try {
+    justPlacedIds.add(id);
+    // 잠깐 숨김 예외를 주고 일정 시간 후 자동 해제(원하면 시간 조절)
+    setTimeout(()=> justPlacedIds.delete(id), 2000);
+  } catch(e) {}
+}
+    const diceBtn = document.getElementById('diceBtn');
+    const diceResult = document.getElementById('diceResult');
+    const moveEnergyDisplay = document.getElementById('moveEnergyDisplay');
+    const endTurnBtn = document.getElementById('endTurnBtn');
+    const defeatMsg = document.getElementById('defeatMsg');
+    const deselectBtn = document.getElementById('deselectBtn');
+    const scoreBoard = document.getElementById('scoreBoard');
+    const size = 14;
+    const snowballs = []; // {x,y}
+    const gifts = []; // {x,y}
+    const waterPuddles = []; // {x,y} - 샤워기의 '웅덩이 만들기'로 생성되는 물 웅덩이 칸
+    // ===== 승리 조건: 정가운데 보라색 칸 점수제 =====
+    const teamScores = [0, 0, 0, 0];
+    let gameEnded = false;
+    let scoreResetDone10 = false;
+    let scoreResetDone20 = false;
+
+    let moveEnergy = 0;
+    let diceRolledThisTurn = false;
+    let lastDiceRoll = null;
+    let gameMode = null;
+    const modeSelect = { active: false };
+    // 승리 조건(게임 목표) 모드: 'territory'(점령전, 기존 30점 선취) | 'king'(왕좌 쟁탈전, 왕 제거 시 팀 전멸)
+    let winMode = 'territory';
+    const winModeSelect = { active: false };
+    const specialDraft = {
+  active: false,
+  mode: 'simul',
+  team: 0,
+  chosenCount: [0,0,0,0],
+  chosenIds: new Set(),
+  focusId: null,
+  pageByTeam: {0:0,1:0,2:0,3:0},
+  doneByTeam: {0:false,1:false,2:false,3:false}
+};
+
+// 랜덤 드래프트 상태
+const randomDraft = {
+  active: false,
+  round: 0,             // 0~3
+  order: [0,1,2,3],
+  idx: 0,
+  pool: [],
+  taken: new Set()      // ⬅️ 이미 선택된 특수 병사 이름 집합
+};
+const deploy = {
+  active: false,
+  order: [3,2,1,0],   // 4 -> 3 -> 2 -> 1
+  idx: 0,
+  queueByTeam: new Map(), // team -> 배열(배치할 말들)
+  startPos: new Map()     // team -> {x,y}
+};
+// ===== 온라인: 현재 게임상태 → 문서 / 문서 → 게임상태 =====
+// 큰 상태를 통째로 동기화(1차 버전 간편 전략)
+function mapToObj(m){ const o={}; m.forEach((v,k)=>o[k]=v); return o; }
+function objToMap(o){ const m=new Map(); Object.entries(o||{}).forEach(([k,v])=>m.set(isNaN(k)?k:Number(k),v)); return m; }
+// 선택된 특수병사 id 집합 -> 팀별 선택 개수 재계산
+function recomputeChosenCountsFrom(setOfIds){
+  const cnt = [0,0,0,0];
+  for (const id of setOfIds || []) {
+    const u = players.find(p => p.id === id);
+    if (u && u.team >= 0 && u.team <= 3) {
+      cnt[u.team] = (cnt[u.team] || 0) + 1;
+    }
+  }
+  return cnt;
+}
+function chosenIdsForTeam(team){
+  const out = [];
+  for (const id of specialDraft.chosenIds || []) {
+    const u = players.find(p => p.id === id);
+    if (u && u.team === team) out.push(id);
+  }
+  return out;
+}
+
+function toRoomState(){
+  return {
+    status: 'playing',
+    version: Date.now(),
+    owners, // 팀 소유자 동기화
+    players, currentTurn, currentRound,
+    moveEnergy, diceRolledThisTurn, lastDiceRoll,
+    snowballs,gifts,
+    ninjaSwap, cartLink, castleTeleport, formTrans, keeperChoice,
+    specialDraft: {
+      active: specialDraft.active,
+      mode: specialDraft.mode,
+      team: specialDraft.team,
+      chosenCount: specialDraft.chosenCount,
+      chosenIds: Array.from(specialDraft.chosenIds||[]),
+      focusId: specialDraft.focusId,
+      pageByTeam: specialDraft.pageByTeam,
+      doneByTeam: specialDraft.doneByTeam
+    },
+    randomDraft: {
+      ...randomDraft,
+      taken: Array.from(randomDraft.taken||[])
+    },
+    deploy: {
+      ...deploy,
+      queueByTeam: mapToObj(deploy.queueByTeam||new Map()),
+      startPos:   mapToObj(deploy.startPos||new Map())
+    },
+    modeSelect, gameMode,
+    winModeSelect, winMode,
+  };
+}
+function applyRoomState(s){
+  if (typeof s.version === 'number') {
+    if (s.version <= __stateVersion) return;
+    __stateVersion = s.version;
+  }
+    // 로컬 선택 백업(유니온 병합에 사용)
+  try { window.__localChosenBackup = new Set(specialDraft?.chosenIds || []); } catch(e){}
+
+  if (s.status === 'lobby') return;
+
+  // 온라인: 팀 소유자 동기화
+  if (s.owners) {
+    owners = s.owners;
+    try { renderTeamSlots?.(); } catch(e){}
+  }
+
+  players.splice(0, players.length, ...(s.players||[]));
+  currentTurn = s.currentTurn ?? currentTurn;
+  currentRound = s.currentRound ?? currentRound;
+  moveEnergy = s.moveEnergy ?? 0;
+  diceRolledThisTurn = !!s.diceRolledThisTurn;
+  lastDiceRoll = s.lastDiceRoll ?? null;
+  selectedPlayerId = null;
+  snowballs.splice(0, snowballs.length, ...((s.snowballs)||[]));
+
+  Object.assign(ninjaSwap, s.ninjaSwap||{active:false,ninjaId:null});
+  Object.assign(cartLink, s.cartLink||{active:false,pusherId:null,mateId:null,roundTagged:null});
+  Object.assign(castleTeleport, s.castleTeleport||{active:false,pieceId:null,team:null,fromXY:null});
+  Object.assign(formTrans, s.formTrans||{picking:false,trancerId:null});
+  Object.assign(keeperChoice, s.keeperChoice||{active:false,keeperId:null});
+
+  Object.assign(specialDraft, s.specialDraft || {
+    active:false, mode:'simul', team:0,
+    chosenCount:[0,0,0,0], focusId:null,
+    pageByTeam:{0:0,1:0,2:0,3:0},
+    doneByTeam:{0:false,1:false,2:false,3:false}
+  });
+  specialDraft.chosenIds = new Set((s.specialDraft?.chosenIds)||[]);
+  // 병합: 온라인 동기화 경합으로 선택이 초기화되는 현상 방지
+try {
+  // 이전 로컬 선택을 보존(함수 시작 시점의 이전값을 가져오기 위해, 없으면 빈 Set)
+  const __localBefore = (typeof window.__localChosenBackup === 'object' && window.__localChosenBackup instanceof Set)
+    ? window.__localChosenBackup : new Set();
+
+  // 양쪽 모두 드래프트 중일 때만 유니온
+  if ((s.specialDraft && s.specialDraft.active) && specialDraft.active) {
+    for (const id of __localBefore) specialDraft.chosenIds.add(id);
+    // 병합 후 팀별 카운트 재계산
+    specialDraft.chosenCount = recomputeChosenCountsFrom(specialDraft.chosenIds);
+  }
+} catch(e){}
+
+  Object.assign(randomDraft,  s.randomDraft ||{active:false, round:0, order:[0,1,2,3], idx:0, pool:[], taken:[]});
+  randomDraft.taken = new Set((s.randomDraft?.taken)||[]);
+
+  Object.assign(deploy, s.deploy||{active:false, order:[3,2,1,0], idx:0});
+  deploy.queueByTeam = objToMap(s.deploy?.queueByTeam);
+  deploy.startPos    = objToMap(s.deploy?.startPos);
+
+  Object.assign(modeSelect,   s.modeSelect  ||{active:false});
+  gameMode = s.gameMode ?? gameMode;
+  Object.assign(winModeSelect, s.winModeSelect ||{active:false});
+  winMode = s.winMode ?? winMode;
+
+  diceResult.textContent = diceRolledThisTurn ? `🎲 주사위 결과: ${lastDiceRoll ?? ''}` : '';
+  moveEnergyDisplay.textContent = `남은 이동 에너지: ${moveEnergy}`;
+  if (turnDisplay) turnDisplay.innerText = `턴: ${currentRound}`;
+  status && (status.textContent = `현재 차례: 플레이어 ${currentTurn+1}`);
+  drawBoard();
+  if (specialDraft?.active) renderSpecialDraft();
+  if (randomDraft?.active)  renderRandomDraft();
+}
+function startDeploymentPhase() {
+  deploy.active = true;
+  deploy.idx = 0;
+  deploy.queueByTeam.clear();
+  deploy.startPos.clear();
+
+  // ✅ 활성 팀만 배치 진행 (온라인: 소유된 팀만)
+  const active = getActiveTeams();
+  deploy.order = active.slice().reverse();  // 예전 [3,2,1,0] 대신, 활성 팀만 역순
+
+  // 팀별 시작지점 & 배치 대상: 성 제외 모든 말(왕/일반/특수)
+  for (const t of active) {
+    const seed = players.find(p => p.team === t && (p.name === '왕' || p.name === '일반 병사'));
+    if (!seed) continue;
+    deploy.startPos.set(t, { x: seed.x, y: seed.y });
+
+    const list = players.filter(p => p.team === t && p.name !== '성'); // 성만 제외
+    deploy.queueByTeam.set(t, [...list]);
+  }
+  if (deploy.order.length === 0) {
+    // 활성 팀이 없다면 배치 없이 바로 진행 종료
+    deploy.active = false;
+    status && (status.textContent = '배치할 팀이 없습니다');
+    drawBoard();
+    return;
+  }
+
+  if (online) {
+    status && (status.textContent = '배치 단계: 자신의 팀 말만 배치 가능합니다 (모두 완료되면 자동 진행)');
+  } else {
+    status && (status.textContent =
+      `배치 단계: 플레이어 ${currentDeployTeam()+1}가 배치합니다 (시작지점에서 맨해튼 5칸 이내 빈칸 클릭)`);
+  }
+  popup.style.display = 'none';
+  drawBoard();
+  if (online && isMobile()) {
+  status && (status.textContent = '배치 단계: 모바일에서는 배치 중 내 팀 말만 보임');
+}
+  if (online) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+  }
+}
+function isTeamDeployDone(team){
+  if (!deploy?.active) return true;
+  const q = deploy?.queueByTeam?.get?.(team) || [];
+  return q.length === 0;
+}
+// 배치 배너 UI
+function updateDeployBanner() {
+  let el = document.getElementById('deployBanner');
+  if (!deploy.active) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'deployBanner';
+    el.className = 'absolute top-16 left-1/2 -translate-x-1/2 px-4 py-2 bg-violet-600 text-white rounded shadow';
+    document.body.appendChild(el);
+  }
+
+  if (online) {
+    // 내 소유 팀들의 남은 개수 합산
+    const mine = myOwnedTeams();
+    let remain = 0;
+    for (const t of mine) remain += (deploy.queueByTeam.get(t)||[]).length;
+    el.textContent = `배치 단계(온라인 동시): 내 남은 말 ${remain}개 — 자신의 팀만 배치 가능`;
+    return;
+  }
+
+  // 오프라인 기존 표시
+  const team = deploy.order[deploy.idx];
+  const q = deploy.queueByTeam.get(team) || [];
+  const next = q[0];
+  const remain = q.length;
+  el.textContent = next
+    ? `플레이어 ${team+1} 배치 중 — 다음 말: [${next.name}] (남은 ${remain}개)`
+    : `플레이어 ${team+1} 배치 중 — 남은 말 없음`;
+}
+
+
+function currentDeployTeam() { return deploy.order[deploy.idx]; }
+function tryPlaceAt(x, y) {
+  const mine = myOwnedTeams ? myOwnedTeams() : getAliveTeams();
+
+  if (mine.length === 0) {
+    if (status) status.textContent = '온라인 배치: 먼저 상단의 "팀 배정"에서 본인 팀을 선택하세요';
+    showTeamClaimUIForDraft();
+    return true;
+  }
+  if (online) {
+const mine = myOwnedTeams ? myOwnedTeams() : [];
+if (mine.length === 0) {
+if (status) status.textContent = '온라인 배치: 먼저 상단의 "팀 배정"에서 본인 팀을 선택하세요';
+showTeamClaimUIForDraft();
+return true;
+}
+}
+  let team;
+  if (online) {
+  const mine = myOwnedTeams();
+  // 소유 팀 자체가 없을 때 → 안내 후 팀 선택 UI로 유도
+  if (mine.length === 0) {
+    status && (status.textContent='온라인 배치: 먼저 상단의 "팀 배정"에서 본인 팀을 선택하세요');
+    // 팀 슬롯 영역을 잠깐 하이라이트
+    try {
+      const el = document.getElementById('teamBar');
+      if (el) {
+        el.style.boxShadow = '0 0 0 3px rgba(16,185,129,.9)'; // emerald
+        setTimeout(()=>{ el.style.boxShadow = ''; }, 1200);
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    } catch(e) {}
+    return true;
+  }
+  // 내가 가진 팀 중 아직 큐가 남아있는 팀
+  team = mine.find(t => {
+    const q = deploy.queueByTeam.get(t) || [];
+    return q.length > 0;
+  });
+  if (team == null) {
+    status && (status.textContent='배치할 남은 말이 없습니다');
+    return true;
+  }
+  // 소유자 검증 그대로 유지
+  if (owners?.[String(team)] !== myPeerId) {
+    status && (status.textContent='해당 팀 소유자만 배치할 수 있습니다');
+    return true;
+  }
+  } else {
+    team = currentDeployTeam();
+  }
+
+  const start = deploy.startPos.get(team);
+  const q = deploy.queueByTeam.get(team) || [];
+  if (!start || q.length === 0) {
+    advanceDeployTeam();
+    return true;
+  }
+  const d = Math.abs(start.x - x) + Math.abs(start.y - y);
+  if (d > 5) { status && (status.textContent = '시작 지점에서 맨해튼 5 이내만 배치 가능합니다'); return true; }
+  if (cellOccupied(x,y)) { status && (status.textContent = '이미 점유된 칸입니다'); return true; }
+  pushSnapshot('deploy-place');
+  const u = q.shift();
+  const unitName = u.name;
+  u.x = x; u.y = y;
+  markJustPlaced(u.id);
+  deploy.queueByTeam.set(team, q);
+  drawBoard?.();
+  if (online) {
+    const a = makeAction('SKILL', { kind:'DEPLOY_PLACE', team, unitId: u.id, x, y });
+    a.post = hashState();
+    broadcast(a);
+  }
+  drawBoard();
+  status && (status.textContent = `플레이어 ${team+1}: [${unitName}] 배치 완료 (${q.length}개 남음)`);
+  if (q.length === 0) advanceDeployTeam();
+  else status && (status.textContent += ' — 같은 팀이 계속 배치합니다');
+  return true;
+}
+
+function allDeploymentDone(){
+  for (const [t, q] of deploy.queueByTeam.entries()) {
+    if ((q||[]).length > 0) return false;
+  }
+  return true;
+}
+function advanceDeployTeam() {
+  // ✅ 온라인(동시 배치): 모두 끝났는지만 확인
+  if (online) {
+    if (allDeploymentDone()) {
+      deploy.active = false;
+      status && (status.textContent = '배치 완료! 게임을 진행하세요');
+      drawBoard();
+      if (online) {
+        const state = toRoomState();
+        broadcast({ t:'SYNC', state, hash: hashState() });
+      }
+    }
+    return;
+  }
+
+  // ⬇️ 오프라인(기존 순차) 로직 그대로
+  deploy.idx++;
+  while (deploy.idx < deploy.order.length) {
+    const t = deploy.order[deploy.idx];
+    const q = deploy.queueByTeam.get(t) || [];
+    if (!isTeamActive(t) || q.length === 0) { deploy.idx++; continue; }
+    break;
+  }
+  if (deploy.idx >= deploy.order.length) {
+    deploy.active = false;
+    status && (status.textContent = '배치 완료! 게임을 진행하세요');
+    drawBoard();
+    return;
+  }
+  status && (status.textContent = `배치 단계: 플레이어 ${currentDeployTeam()+1}가 배치합니다`);
+}
+
+
+    if (window.__diceHandler__) diceBtn.removeEventListener('click', window.__diceHandler__);
+
+    window.__diceHandler__ = () => {
+  // 드래프트/이미 굴림/패배 팀 등 가드
+  if (gameEnded) return;
+  if (specialDraft?.active || randomDraft?.active) return;
+  if (diceRolledThisTurn) return;
+  if (!isTeamAlive?.(currentTurn)) return;
+
+  // 결과 생성
+  const result = Math.floor(Math.random() * 6) + 1;
+
+  if (online) {
+    if (!awaitGetIsMyTurn()) { status.textContent='내 차례가 아닙니다'; return; }
+    const action = makeAction('ROLL', { result });
+    // 로컬 즉시 적용
+    applyRoll(result);
+    action.post = hashState();
+    broadcast(action);
+    return;
+  }
+
+  // 오프라인
+  applyRoll(result);
+};
+// ✅ 추가: 간단 스냅샷(최근 30개)
+const __history = [];
+function deepClone(v){ return JSON.parse(JSON.stringify(v)); }
+function pushSnapshot(reason=''){
+  __history.push({
+  reason,
+  players: deepClone(players),
+  snowballs: deepClone(snowballs),
+  gifts: deepClone(gifts),
+  currentTurn, currentRound, moveEnergy, diceRolledThisTurn, lastDiceRoll, selectedPlayerId,
+  ninjaSwap: deepClone(ninjaSwap), cartLink: deepClone(cartLink)
+});
+  if (__history.length > 30) __history.shift();
+  
+}
+function restoreLastSnapshot(){
+  const snap = __history.pop();
+  if (!snap) { status && (status.textContent='되돌릴 스냅샷이 없습니다'); return; }
+  players.splice(0, players.length, ...snap.players);
+  snowballs.splice(0, snowballs.length, ...snap.snowballs);
+  gifts.splice(0, gifts.length, ...(snap.gifts || []));
+  currentTurn = snap.currentTurn; 
+currentRound = snap.currentRound;
+moveEnergy = snap.moveEnergy; 
+diceRolledThisTurn = snap.diceRolledThisTurn;
+lastDiceRoll = snap.lastDiceRoll ?? null;
+selectedPlayerId = snap.selectedPlayerId;
+  ninjaSwap.active = snap.ninjaSwap.active; ninjaSwap.ninjaId = snap.ninjaSwap.ninjaId;
+  cartLink.active = snap.cartLink.active; cartLink.pusherId = snap.cartLink.pusherId;
+  cartLink.mateId = snap.cartLink.mateId; cartLink.roundTagged = snap.cartLink.roundTagged;
+  diceResult.textContent = diceRolledThisTurn ? `🎲 주사위 결과: ${lastDiceRoll ?? ''}` : '';
+  moveEnergyDisplay.textContent = `남은 이동 에너지: ${moveEnergy}`;
+  drawBoard();
+  status && (status.textContent = '되돌리기 완료');
+  setTimeout(() => { drawBoard(); }, 1000);
+}
+(function setupUndoButton(){
+  const btn = document.getElementById('undoBtn');
+  btn.addEventListener('click', () => {
+    if (online && !awaitGetIsMyTurn()) { status.textContent='내 차례가 아닙니다'; return; }
+    restoreLastSnapshot();
+  });
+})();
+// 선택 해제: 현재 선택된 병사만 해제(편의 기능)
+deselectBtn.addEventListener('click', () => {
+  if (online && !awaitGetIsMyTurn()) { status.textContent = '내 차례가 아닙니다'; return; }
+  // 선택 상태만 해제: 다른 모드/스냅샷에는 영향 주지 않음
+  selectedPlayerId = null;
+  drawBoard();
+  if (status) status.textContent = '선택을 해제했습니다';
+});
+diceBtn.addEventListener('click', window.__diceHandler__);
+    const players = [];
+const colors = ['bg-red-600', 'bg-yellow-400', 'bg-blue-600', 'bg-green-600'];
+for (let t = 0; t < 4; t++) {
+  for (let i = 1; i <= 10; i++) {
+    players.push({ id: `p${t + 1}-${i}`, name: '일반 병사', x: t === 0 ? 0 : t === 1 ? size - 1 : t === 2 ? size - 1 : 0, y: t === 0 ? 0 : t === 1 ? 0 : t === 2 ? size - 1 : size - 1, color: colors[t], power: 1, team: t, movement: 1, range: 0 });
+  }
+  // 왕을 게임에 등장시키던 코드(비활성화): 새 규칙에서는 왕이 존재하지 않음
+  // players.push({ id: `p${t + 1}-king`, name: '왕', x: t === 0 ? 0 : t === 1 ? size - 1 : t === 2 ? size - 1 : 0, y: t === 0 ? 0 : t === 1 ? 0 : t === 2 ? size - 1 : size - 1, color: colors[t], power: 1, team: t, movement: 1, range: 0 });
+}
+// drawBoard(); ← 이 줄을 삭제하거나 주석 처리
+    function addSnipers() {
+  const startByTeam = new Map();
+
+  // 왕 또는 일반 병사가 있는 첫 좌표를 팀별 시작 지점으로 채택
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+
+  for (const [team, pos] of startByTeam.entries()) {
+    // 이미 저격수가 있으면 중복 생성 방지
+    const exists = players.some(pp => pp.team === team && pp.name === '저격수');
+    if (exists) continue;
+
+    const sniper = {
+      id: `sniper-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '저격수',
+      team,
+      x: pos.x,
+      y: pos.y,
+      color: getTeamColor(team),
+      power: 2,
+      movement: 1,
+      range: 2,
+      type: 'sniper'
+    };
+    players.push(sniper);
+  }
+}
+
+    function addReapers() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사' || p.name === '저격수') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '사신')) continue;
+    players.push({
+  id: `reaper-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+  name: '사신',
+  team,
+  x: pos.x,
+  y: pos.y,
+  color: getTeamColor(team),
+  power: 4,
+  movement: 4,
+  range: 4,
+  type: 'reaper'
+});
+  }
+}
+
+    // addPoseidons → addOrcas (함수명/문구 통째로 바꾸기)
+function addOrcas() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사' || p.name === '저격수' || p.name === '사신') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '범고래')) continue;
+    players.push({
+      id: `orca-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '범고래',
+      team, x: pos.x, y: pos.y, color: getTeamColor(team),
+      power: 1, movement: 1, range: 1, type: 'orca',
+      tags: ['특수 병사', '친수성']
+    });
+  }
+}
+
+
+    function addJournalists() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사' || p.name === '저격수' || p.name === '사신' || p.name === '범고래') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '기자')) continue;
+    players.push({
+      id: `journalist-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '기자',
+      team,
+      x: pos.x,
+      y: pos.y,
+      color: getTeamColor(team),
+      power: 1,
+      movement: 1,
+      range: 0,
+      type: 'journalist'
+    });
+  }
+}
+
+    function addNinjas() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사' || p.name === '저격수' || p.name === '사신' || p.name === '범고래' || p.name === '기자' || p.name === '수레꾼' || p.name === '고목' || p.name === '건축가' || p.name === '사육사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '닌자')) continue;
+    players.push({
+      id: `ninja-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '닌자',
+      team,
+      x: pos.x,
+      y: pos.y,
+      color: getTeamColor(team),
+      power: 0.5,
+      movement: 0.25,
+      range: 5,           // ⬅️ 사거리 5
+      type: 'ninja',
+      tags: ['특수 병사']
+    });
+  }
+}
+
+    function addCartPushers() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사' || p.name === '저격수' || p.name === '사신' || p.name === '범고래' || p.name === '기자' || p.name === '닌자') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '수레꾼')) continue;
+    players.push({
+      id: `cart-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '수레꾼',
+      team,
+      x: pos.x,
+      y: pos.y,
+      color: getTeamColor(team),
+      power: 0.5,
+      movement: 1,
+      range: 0,
+      type: 'cart'
+    });
+  }
+}
+
+    // ✅ 추가: 팀별 '고목' 1기 생성(중복 방지)
+function addGomoks() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사' || p.name === '저격수' || p.name === '사신' || p.name === '범고래' || p.name === '기자' || p.name === '닌자' || p.name === '수레꾼') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '고목')) continue;
+    players.push({
+      id: `gomok-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '고목',
+      team,
+      x: pos.x,
+      y: pos.y,
+      color: getTeamColor(team),
+      power: 1,
+      movement: 1,
+      range: 1,
+      type: 'gomok',
+      _movedThisTurn: false,
+      tags: ['특수 병사', '친수성']
+    });
+  }
+}
+
+    function addArchitects() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사' || p.name === '저격수' || p.name === '사신' || p.name === '범고래' || p.name === '기자' || p.name === '닌자' || p.name === '수레꾼' || p.name === '고목') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '건축가')) continue;
+    players.push({
+      id: `arch-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '건축가',
+      team,
+      x: pos.x,
+      y: pos.y,
+      color: getTeamColor(team),
+      power: 1, 
+      movement: 1,
+      range: 0,
+      type: 'architect'
+    });
+  }
+}
+
+    function addZookeepers() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사' || p.name === '저격수' || p.name === '사신' || p.name === '범고래' || p.name === '기자' || p.name === '닌자' || p.name === '수레꾼' || p.name === '고목' || p.name === '건축가') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '사육사')) continue;
+    players.push({
+      id: `zoo-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '사육사',
+      team,
+      x: pos.x,
+      y: pos.y,
+      color: getTeamColor(team),
+      power: 1,
+      movement: 1,
+      range: 0,
+      type: 'zookeeper'
+    });
+  }
+}
+    function addGamblers() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '도박사')) continue;
+    players.push({ id:`gamb-${team}-${Date.now()}`, name:'도박사', team, x:pos.x, y:pos.y, color:getTeamColor(team),
+      power:1, movement:0.5, range:0, type:'gambler', tags:['특수 병사'] });
+  }
+}
+    function addZombies() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '좀비')) continue;
+    players.push({ id:`zom-${team}-${Date.now()}`, name:'좀비', team, x:pos.x, y:pos.y, color:getTeamColor(team),
+      power:1, movement:0.5, range:0, type:'zombie', tags:['특수 병사'] });
+  }
+}
+function addDoctors() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '의사')) continue;
+    players.push({
+      id: `doc-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '의사',
+      team,
+      x: pos.x,
+      y: pos.y,
+      color: getTeamColor(team),
+      power: 0,
+      movement: 1,
+      range: 2,
+      type: 'doctor',
+    });
+  }
+}
+function addSnowmen() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '눈사람')) continue;
+    players.push({
+      id: `snow-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '눈사람',
+      team, x: pos.x, y: pos.y, color: getTeamColor(team),
+      power: 0, movement: 1, range: 1, type: 'snowman', tags: ['특수 병사']
+    });
+  }
+}
+
+function addFormTransers() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '폼트랜서')) continue;
+    players.push({
+      id: `form-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '폼트랜서',
+      team, x: pos.x, y: pos.y, color: getTeamColor(team),
+      power: 1, movement: 1, range: 1, type: 'formtrancer', tags: ['특수 병사'],
+      _form: null // {name,type,power,range,movement,tags}
+    });
+  }
+}
+function addClowns() {
+  const startByTeam = new Map();
+
+  // 왕 또는 일반 병사가 있는 좌표를 시작 지점으로 사용
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+
+  for (const [team, pos] of startByTeam.entries()) {
+    // 이미 광대가 있으면 중복 생성 방지
+    const exists = players.some(pp => pp.team === team && pp.name === '광대');
+    if (exists) continue;
+
+    const clown = {
+      id: `clown-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '광대',
+      team,
+      x: pos.x,
+      y: pos.y,
+      color: getTeamColor(team),
+      power: 1,
+      movement: 1,
+      range: 0,
+      type: 'special'
+    };
+    players.push(clown);
+  }
+}
+  function addTricksters() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '스키퍼')) continue;
+    players.push({
+      id: `trick-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '스키퍼',
+      team, x: pos.x, y: pos.y, color: getTeamColor(team),
+      power: 1, movement: 1, range: 0, type: 'trickster'
+    });
+  }
+}
+function addQueenAnts() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '여왕개미')) continue;
+    players.push({
+      id: `queen-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '여왕개미',
+      team, x: pos.x, y: pos.y,
+      color: getTeamColor(team),
+      power: 1, movement: 1, range: 0,
+      type: 'queenAnt', _ants: [], tags: ['특수 병사']
+    });
+  }
+}
+
+function addMerchants() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '상인')) continue;
+    players.push({
+      id: `merchant-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '상인',
+      team, x: pos.x, y: pos.y,
+      color: getTeamColor(team),
+      power: 0.5, movement: 1, range: 0,
+      type: 'merchant', _usedThisTurn: false, tags: ['특수 병사']
+    });
+  }
+}
+// ✅ 팀별 응원단장 1기 생성(중복 방지)
+function addCheerLeaders() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y, color: p.color });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '응원단장')) continue;
+    players.push({
+      id: `cheer-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '응원단장',
+      team, x: pos.x, y: pos.y, color: getTeamColor(team),
+      power: 1, movement: 1, range: 5, type: 'cheer', tags: ['특수 병사']
+    });
+  }
+}
+function addTruckers(){
+  const pos = new Map();
+  for (const p of players) {
+    if ((p.name==='왕'||p.name==='일반 병사') && !pos.has(p.team)) pos.set(p.team,{x:p.x,y:p.y});
+  }
+  for (const [team, s] of pos.entries()){
+    if (players.some(u=>u.team===team && u.name==='트럭 운전사')) continue;
+    players.push({
+      id:`trucker-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name:'트럭 운전사', team, x:s.x, y:s.y, color:teamColor(team),
+      power:1, movement:0.5, range:0, type:'trucker', _truckUsedThisTurn:false
+    });
+  }
+}
+function addBlazeEmberPlaceholders(){
+  const pos = new Map();
+  for (const p of players) {
+    if ((p.name==='왕'||p.name==='일반 병사') && !pos.has(p.team)) pos.set(p.team,{x:p.x,y:p.y});
+  }
+  // 플레이스홀더(드래프트용 표시). 확정 시 실제 두 유닛으로 대체됨
+  for (const [team, s] of pos.entries()){
+    if (players.some(u=>u.team===team && u.name==='블레이즈 & 엠버')) continue;
+    players.push({
+      id:`blaze-ember-ph-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name:'블레이즈 & 엠버', team, x:s.x, y:s.y, color:teamColor(team),
+      power:0, movement:0, range:0, type:'blaze_ember_pair'
+    });
+  }
+}
+function addBishops() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '비숍')) continue;
+    players.push({
+      id: `bishop-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '비숍',
+      team, x: pos.x, y: pos.y,
+      color: getTeamColor(team),
+      power: 0.5, movement: 1, range: 0,
+      type: 'bishop', tags: ['특수 병사']
+    });
+  }
+}
+function addShowers() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '샤워기')) continue;
+    players.push({
+      id: `shower-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '샤워기',
+      team, x: pos.x, y: pos.y,
+      color: getTeamColor(team),
+      power: 1, movement: 1, range: 1,
+      type: 'shower', tags: ['특수 병사', '친수성'], _usedThisTurn: false
+    });
+  }
+}
+    function getTeamColor(team) {
+  const any = players.find(pp => pp.team === team && pp.color);
+  return any ? any.color : 'bg-gray-500';
+    }
+
+    let currentTurn = 0;
+    let currentRound = 1;
+    let selectedPlayerId = null;
+    let hasMovedThisTurn = false;
+
+    function isCenterCell(x, y) {
+      const c0 = Math.floor(size / 2) - 1;
+      const c1 = Math.floor(size / 2);
+      return x >= c0 && x <= c1 && y >= c0 && y <= c1;
+    }
+    function getCornerColor(x, y) {
+      // 왕좌 쟁탈전: 점수용 가운데 칸이 의미가 없으므로 보라색으로 표시하지 않음
+      if (isCenterCell(x, y) && winMode !== 'king') return 'bg-purple-500';
+      if (x === 0 && y === 0) return 'bg-red-500';
+      if (x === size - 1 && y === 0) return 'bg-yellow-400';
+      if (x === 0 && y === size - 1) return 'bg-green-500';
+      if (x === size - 1 && y === size - 1) return 'bg-blue-500';
+      return 'bg-white';
+    }
+function isOrthogonalNeighbor(ax, ay, bx, by) {
+  return (ax === bx && Math.abs(ay - by) === 1) || (ay === by && Math.abs(ax - bx) === 1);
+}
+function makeOnCellClick(x, y, onCellPlayers) {
+  return function onCellClick(e) {
+    e.stopPropagation();
+    if (gameEnded) { status && (status.textContent = '게임이 종료되었습니다'); return; }
+    if (bishopDash.active) {
+      const unit = players.find(p => p.id === bishopDash.unitId);
+      bishopDash.active = false; // 클릭 1회로 종료
+      if (!unit) { drawBoard(); return; }
+      // 내 팀 턴만 허용
+      if (unit.team !== currentTurn) { status && (status.textContent='자신의 차례가 아닙니다'); return; }
+
+      const dx = x - unit.x, dy = y - unit.y;
+      if (dx === 0 && dy === 0) { drawBoard(); return; }
+      if (Math.abs(dx) !== Math.abs(dy)) { status && (status.textContent='대각선만 가능합니다'); return; }
+
+      // 개구리 범위 진입 금지 규칙
+      if (typeof isEnteringEnemyFrog === 'function' &&
+          isEnteringEnemyFrog(unit.x, unit.y, x, y, unit.team)) {
+        status && (status.textContent='개구리 범위로는 진입할 수 없습니다');
+        return;
+      }
+
+      // 경로 차단: 첫 점유칸 뒤는 불가
+      const stepX = dx > 0 ? 1 : -1;
+      const stepY = dy > 0 ? 1 : -1;
+      let cx = unit.x + stepX, cy = unit.y + stepY;
+      let blocked = false;
+      while (cx !== x || cy !== y) {
+        if (cellOccupied(cx, cy)) { blocked = true; break; }
+        cx += stepX; cy += stepY;
+      }
+      if (blocked) { status && (status.textContent='경로에 말이 있어 그 뒤로는 갈 수 없습니다'); return; }
+
+      // 스냅샷 후 즉시 이동(에너지 소모 없음)
+      pushSnapshot('skill:bishop-dash');
+      unit.x = x; unit.y = y;
+      unit._usedThisTurn = true;
+      drawBoard();
+      return;
+    }
+    // 현재 선택된 말 ID로 실제 객체를 조회 (undefined 접근 방지)
+    const sel = players.find(p => p.id === selectedPlayerId) || null;
+
+    if (!sel) {
+      showPopup(e.pageX, e.pageY, onCellPlayers);
+      return;
+    }
+
+    // 선택 있음 → 상하좌우면 이동, 아니면 팝업
+    if (isOrthogonalNeighbor(sel.x, sel.y, x, y)) {
+      const dx = x - sel.x;
+      const dy = y - sel.y;
+      if (!canApplyStep(sel, dx, dy)) return;
+      pushSnapshot('click-move'); // 이동도 입력이므로 스냅샷
+      applyStep(sel, dx, dy);
+      return;
+    }
+
+    showPopup(e.pageX, e.pageY, onCellPlayers);
+  };
+}
+    function drawBoard() {
+    if (!board) return;
+  board.innerHTML = '';
+
+  // popup.dataset.lock이 '1'이면 절대 숨기지 않음
+  if (popup?.dataset?.lock !== '1' &&
+      !(specialDraft?.active || randomDraft?.active || modeSelect?.active)) {
+    if (typeof popup !== 'undefined') popup.style.display = 'none';
+  }
+
+  // 비숍 대각선 질주 발동 중이면 이동 가능한 칸을 미리 계산
+  let bishopReachSet = null;
+  if (bishopDash.active) {
+    const bishopUnit = players.find(p => p.id === bishopDash.unitId);
+    if (bishopUnit) {
+      bishopReachSet = new Set(getBishopDashReachableCells(bishopUnit).map(c => `${c.x},${c.y}`));
+    }
+  }
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const cell = document.createElement('div');
+      cell.className = `relative flex items-center justify-center border ${getCornerColor(x, y)}`;
+
+      if (bishopReachSet && bishopReachSet.has(`${x},${y}`)) {
+        const dashHint = document.createElement('div');
+        dashHint.className = 'absolute inset-0 pointer-events-none';
+        dashHint.style.background = 'rgba(244, 114, 182, 0.5)'; // 분홍색
+        cell.appendChild(dashHint);
+      }
+
+      if (isWaterPuddle(x, y)) {
+        const puddle = document.createElement('div');
+        puddle.className = 'absolute inset-0 flex items-center justify-center pointer-events-none';
+        puddle.style.background = 'rgba(59,130,246,0.35)';
+        puddle.style.fontSize = '14px';
+        puddle.textContent = '💧';
+        cell.appendChild(puddle);
+      }
+
+      const visiblePlayers = players.filter(u => !shouldHideUnitForMe(u));
+/* 금제(사라진) 유닛은 보드에서 숨김 */
+const onBoard = visiblePlayers.filter(u => (u.x>=0 && u.y>=0));
+const onCellPlayers  = onBoard.filter(p => p.x === x && p.y === y);
+
+// 이 칸 전용 클릭 핸들러를 먼저 만든다 (x, y, onCellPlayers 캡처)
+const handler = makeOnCellClick(x, y, onCellPlayers);
+
+// 유닛이 보이는 칸이면 내부 square 생성 + 같은 핸들러 연결
+if (onCellPlayers.length > 0) {
+  const square = document.createElement('div');
+  square.className = `${onCellPlayers[0].color} w-full h-full flex items-center justify-center select-none`;
+  square.innerText = onCellPlayers.length > 1 ? onCellPlayers.length : '';
+  square.addEventListener('click', handler);
+  cell.appendChild(square);
+
+  // 선택 하이라이트
+  if (typeof selectedPlayerId !== 'undefined' &&
+      onCellPlayers.some(p => p.id === selectedPlayerId)) {
+    const highlight = document.createElement('div');
+    highlight.className = 'absolute inset-0 ring-4 ring-pink-400 pointer-events-none';
+    cell.appendChild(highlight);
+  }
+}
+
+// 셀 자체에도 같은 핸들러 연결 (테두리/빈칸 클릭 대응)
+cell.addEventListener('click', handler);
+      board.appendChild(cell);
+    }
+  }
+
+  if (status && !gameEnded) {
+    const ownerId = owners?.[String(currentTurn)];
+    const who = ownerId ? (nickMap.get(ownerId) || `플레이어 ${currentTurn+1}`) : `플레이어 ${currentTurn+1}`;
+    status.innerText = `현재 차례: ${who}`;
+  }
+  if (turnDisplay) turnDisplay.innerText = `턴: ${currentRound}`;
+  updateScoreBoard();
+  updateCartLinkIndicator();
+  updateTurnSkillPanel();
+
+  // 눈덩이 UI 동기화
+  syncSnowballsToSnowmen();
+  syncGiftsToSantas();
+  const cells = board.children; // y*size + x
+  for (let i = 0; i < snowballs.length; i++) {
+    const {x,y} = snowballs[i];
+    const idx = y * size + x;
+    const cell = cells[idx];
+    if (!cell) continue;
+
+    const img = document.createElement('img');
+    img.className = 'snowball-icon';
+    img.src = 'data:image/svg+xml;utf8,\
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">\
+    <defs><radialGradient id="g" cx="50%" cy="40%" r="60%">\
+      <stop offset="0%" stop-color="%23ffffff"/><stop offset="70%" stop-color="%23e9f2ff"/><stop offset="100%" stop-color="%23cfd9e6"/></radialGradient></defs>\
+    <circle cx="32" cy="32" r="26" fill="url(%23g)" stroke="%23b9c4d3" stroke-width="2"/>\
+    <circle cx="25" cy="25" r="3" fill="%23ffffff" opacity="0.7"/>\
+  </svg>';
+  img.style.width = '70%';
+img.style.height = '70%';
+    cell.appendChild(img);
+  }
+  // 선물 렌더
+for (let i = 0; i < gifts.length; i++) {
+  const { x, y } = gifts[i];
+  const idx = y * size + x;
+  const cell = cells[idx];
+  if (!cell) continue;
+
+  const gift = document.createElement('div');
+  gift.className = 'absolute inset-0 flex items-center justify-center pointer-events-none';
+  gift.style.fontSize = '18px';
+  gift.textContent = '🎁';
+  cell.appendChild(gift);
+}
+  installMoveKeyHandler();
+  updateBlazeEmberAura();
+  updateShowerPressureBuff();
+}
+// 샤워기 패시브 '수압 증가': 물 웅덩이 위에 있으면 전:4/사:3, 아니면 기본 전:1/사:1로 복귀
+function updateShowerPressureBuff() {
+  for (const u of players) {
+    if (u.name !== '샤워기') continue;
+    if (isWaterPuddle(u.x, u.y)) {
+      u.power = 4; u.range = 3;
+    } else {
+      u.power = 1; u.range = 1;
+    }
+  }
+}
+(function setupSurrenderButton(){
+  const btn = document.getElementById('surrenderBtn');
+  btn.addEventListener('click', () => {
+  if (online && !awaitGetIsMyTurn()) { status.textContent='내 차례가 아닙니다'; return; }
+  const ok = confirm('정말 항복하시겠습니까?');
+  if (!ok) return;
+  const king = players.find(p => p.team === currentTurn && p.name === '왕');
+  if (!king) return;
+  selectedPlayerId = null;
+  removePlayer(king, /*suppressMsg=*/false);
+  endTurn();
+});
+})();
+  function selectPiece(piece) {
+  if (!piece) return;
+  if (piece.team !== currentTurn) return;
+
+  if (selectedPlayerId === piece.id) {
+    selectedPlayerId = null;
+    status && (status.textContent = '');
+    if (popup) popup.style.display = 'none';
+    drawBoard();
+    return;
+  }
+
+  selectedPlayerId = piece.id;
+  if (status) {
+    const ownerId = owners?.[String(piece.team)];
+    const who = ownerId ? (nickMap.get(ownerId) || `${piece.team+1}P`) : `${piece.team+1}P`;
+    status.textContent = `선택됨: ${piece.name} (${who})`;
+  }
+  if (popup) popup.style.display = 'none';
+  drawBoard();
+}
+function formatPowerWithCheer(u){
+  const total = +(u.power ?? 0);
+  const cheer = +(u._cheerBuffVal ?? 0);
+  if (!cheer) return `${total}`;               // 버프 없으면 숫자만
+  const base = +(total - cheer);
+  return `${total} (기본 ${base} + 응원 +${cheer})`;
+}
+
+function showPopup(px, py, playersOnCell) {
+  try { popup.dataset.lock = '1'; } catch(e){}
+  popup.innerHTML = '<p class="font-bold mb-2">말 선택</p>';
+
+  if (!playersOnCell || playersOnCell.length === 0) {
+    const empty = document.createElement('p');
+    empty.textContent = '말이 없습니다';
+    popup.appendChild(empty);
+  } else {
+    // 상태 플래그/객체
+    const inNinjaSwap = !!(ninjaSwap?.active && ninjaSwap.ninjaId);
+    const ninjaObj    = inNinjaSwap ? players.find(p => p.id === ninjaSwap.ninjaId) : null;
+
+    const inCartLink  = !!(cartLink?.active && cartLink.pusherId);
+    const pusherObj   = inCartLink ? players.find(p => p.id === cartLink.pusherId) : null;
+
+    // 기본 목록
+    let listing = playersOnCell.slice();
+
+    // 닌자 스왑 중: 적대/왕 제외 + 사거리 내만
+    if (inNinjaSwap && ninjaObj) {
+      listing = listing.filter(p => {
+        if (p.team === ninjaObj.team) return false;
+        if (p.name === '왕') return false;
+        const d = Math.abs(ninjaObj.x - p.x) + Math.abs(ninjaObj.y - p.y);
+        return d <= (ninjaObj.range ?? 0);
+      });
+      if (listing.length === 0) {
+        const msg = document.createElement('p');
+        msg.textContent = '스왑 가능한 대상이 없습니다';
+        popup.appendChild(msg);
+      }
+    }
+
+    // 수레꾼 연결 중: 같은 칸의 아군(자기 제외)만
+    if (!inNinjaSwap && inCartLink && pusherObj) {
+      listing = listing.filter(p => p.team === pusherObj.team && p.id !== pusherObj.id);
+      if (listing.length === 0) {
+        const msg = document.createElement('p');
+        msg.textContent = '연결할 아군이 없습니다';
+        popup.appendChild(msg);
+      }
+    }
+const PAGE_SIZE = 5;
+let page = Number(popup.dataset.unitPage || 0);
+const pages = Math.max(1, Math.ceil(listing.length / PAGE_SIZE));
+if (page >= pages) page = pages - 1;
+if (page < 0) page = 0;
+popup.dataset.unitPage = String(page);
+
+if (listing.length > PAGE_SIZE) {
+  const top = document.createElement('div');
+  top.className = 'flex items-center justify-between mb-2';
+  const prev = document.createElement('button');
+  prev.className = 'px-2 py-1 rounded border border-gray-600';
+  prev.textContent = '← 이전';
+  prev.onclick = (e) => { e.stopPropagation(); popup.dataset.unitPage = String(Math.max(0, page-1)); showPopup(px, py, playersOnCell); };
+  const label = document.createElement('span');
+  label.className = 'text-sm opacity-80';
+  label.textContent = `페이지 ${page+1} / ${pages}`;
+  const next = document.createElement('button');
+  next.className = 'px-2 py-1 rounded border border-gray-600';
+  next.textContent = '다음 →';
+  next.onclick = (e) => { e.stopPropagation(); popup.dataset.unitPage = String(Math.min(pages-1, page+1)); showPopup(px, py, playersOnCell); };
+  top.appendChild(prev); top.appendChild(label); top.appendChild(next);
+  popup.appendChild(top);
+}
+
+const start = page * PAGE_SIZE;
+const end   = start + PAGE_SIZE;
+const pageItems = listing.slice(start, end);
+    pageItems.forEach((p) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
+      btn.textContent = `${displayName(p)} - 팀 ${p.team + 1} / 전투력: ${formatPowerWithCheer(p)} / 이동능력: ${p.movement} / 사거리: ${p.range}`;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+
+        // 닌자 스왑
+        if (inNinjaSwap && ninjaObj && p.team !== ninjaObj.team) {
+          performNinjaSwap(p);
+          return;
+        }
+
+        // 수레꾼 연결
+        if (inCartLink && pusherObj && p.team === pusherObj.team && p.id !== pusherObj.id) {
+          setCartMate(p);
+          popup.style.display = 'none';
+          drawBoard();
+          return;
+        }
+
+        // 폼트랜서 변신 대상 선택 중
+        if (formTrans?.picking && formTrans.trancerId) {
+          if (isSpecialUnit(p)) {
+            tryFormTransform(p);
+            popup.style.display = 'none';
+          } else {
+            status && (status.textContent = '특수 병사만 변신 대상입니다');
+          }
+          return;
+        }
+
+        // 일반 선택
+        selectPiece(p);
+      });
+      popup.appendChild(btn);
+    });
+  }
+
+  // 현재 화면(뷰포트) 중앙 정렬 + 스크롤 처리
+  // 왜: board는 패닝/스크롤로 화면 밖까지 넓게 존재할 수 있어 boardRect 기준 중앙 정렬 시
+  // 팝업이 현재 보이는 화면 밖으로 밀려날 수 있음 → 뷰포트 기준 고정 중앙으로 변경
+  popup.style.display   = 'block';
+  popup.style.maxHeight = '70vh';
+  popup.style.overflowY = 'auto';
+  popup.style.left = '50%';
+  popup.style.top  = '50%';
+  popup.style.transform = 'translate(-50%, -50%)';
+
+  // 바깥 클릭 시 닫기(드래프트/모드/배치 중은 유지)
+  const closeHandler = (ev) => {
+    if (specialDraft?.active || randomDraft?.active || modeSelect?.active || deploy?.active) return;
+    try { popup.dataset.lock = '0'; } catch(e){}
+    popup.style.display = 'none';
+    document.removeEventListener('click', closeHandler);
+  };
+  // 약간 지연 후 바인딩(자기 자신 클릭으로 바로 닫히지 않게)
+  setTimeout(() => document.addEventListener('click', closeHandler), 0);
+}
+
+    
+    function installMoveKeyHandler() {
+  if (window.__moveHandlerInstalled) return;
+  window.__moveHandlerInstalled = true;
+
+  document.addEventListener('keydown', function handleMoveKey(e) {
+    // 드래프트/랜덤/배치 중엔 핫키 일부만
+    if (specialDraft?.active || randomDraft?.active || deploy?.active) {
+      if (e.key === 'z' || e.key === 'Z' || e.key === 'Enter') {
+        if (specialDraft?.active) { e.preventDefault(); pickFocusedSpecial(); }
+      }
+      return;
+    }
+        // 🔒 온라인 모드: 내 차례 아니면 키 입력 무시
+    if (online && !awaitGetIsMyTurn()) return;
+
+    pushSnapshot('move');
+
+    // S: 주사위 굴린 뒤 즉시 턴 넘기기
+    if (e.key === 's' || e.key === 'S') {
+      if (diceRolledThisTurn) { selectedPlayerId = null; endTurn(); }
+      return;
+    }
+    if (e.key === 'l' || e.key === 'L') { cancelCartLink?.(); return; }
+    if (!selectedPlayerId) return;
+    const piece = players.find(p => p.id === selectedPlayerId);
+    if (!piece || piece.team !== currentTurn) return;
+
+    // P/A/Q 기능키
+    if (e.key === 'p' || e.key === 'P') {
+      if (ninjaSwap?.active) { ninjaSwap.active = false; ninjaSwap.ninjaId = null; }
+      if (cartLink?.active) { cancelCartLink(); }
+      if (castleTeleport?.active) { cancelCastleTeleport(); }
+      if (isCastle?.(piece)) { removePlayer(piece); popup && (popup.style.display = 'none'); drawBoard(); }
+      return;
+    }
+    if (e.key === 'e' || e.key === 'E') {
+  if (!selectedPlayerId) return;
+  const unit = players.find(p => p.id === selectedPlayerId);
+  if (!unit || unit.team !== currentTurn) return;
+  if (!isSpecialUnit(unit)) { status && (status.textContent = '특수 병사만 진화할 수 있습니다'); return; }
+  if (evolutionUsed[unit.team]) { status && (status.textContent = '이 팀은 이미 이번 판에서 진화를 사용했습니다'); return; }
+  if (unit._evolved) { status && (status.textContent = '이미 진화한 말입니다'); return; }
+
+  // 개별 진화 효과 적용
+  const ok = applyEvolution(unit);
+  if (ok) {
+    unit._evolved = true;
+    evolutionUsed[unit.team] = true;
+    status && (status.textContent = `${unit.team+1}P의 ${unit.name}가 진화했습니다!`);
+    drawBoard();
+  }
+  return;
+}
+    if (e.key === 'a' || e.key === 'A') {
+      if (!isCastle?.(piece)) {
+        const onMyCastle = hasCastleAt?.(piece.team, piece.x, piece.y);
+        if (onMyCastle && getTeamCastles?.(piece.team).length >= 2) beginCastleTeleport(piece);
+      }
+      return;
+    }
+    if (e.key === 'q' || e.key === 'Q') {
+      if (piece.name === '기자' && currentRound % 5 === 0 && piece._lastGatherRound !== currentRound) {
+        const tx = piece.x, ty = piece.y;
+        for (const u of players) if (u.team === piece.team && u.id !== piece.id) { u.x = tx; u.y = ty; }
+        piece._lastGatherRound = currentRound; drawBoard(); return;
+      }
+      if (piece.name === '닌자' && currentRound % 3 === 0 && isAlone?.(piece)) {
+        if (ninjaSwappedThisTurn) { status && (status.textContent = '이번 차례에 이미 스왑 사용'); return; }
+        beginNinjaSwap?.(piece); return;
+      }
+      if (piece.name === '수레꾼') { beginCartLink?.(piece); return; }
+      if (piece.name === '건축가' && currentRound % 2 === 0) {
+  if (piece._castleBuiltRound === currentRound) {
+    status && (status.textContent = '건축가: 이번 턴에는 이미 성을 건설했습니다');
+    return;
+  }
+  addCastle?.(piece.team, piece.x, piece.y);
+  piece._castleBuiltRound = currentRound;
+  drawBoard();
+  return;
+}
+      const canTransform =
+        (piece.name === '사육사' || piece.name === '코끼리' || piece.name === '고양이' || piece.name === '개구리')
+        && (currentRound % 2 === 0);
+      if (canTransform) { beginKeeperChoice?.(piece); return; }
+if (piece.name === '스키퍼') {
+  if (!diceRolledThisTurn) {
+    status && (status.textContent = '스키퍼: 주사위를 굴린 뒤에만 사용 가능합니다');
+    return;
+  }
+  if (piece._usedThisTurn) {
+    status && (status.textContent = '스키퍼: 이번 차례에는 이미 사용했습니다');
+    return;
+  }
+  if (lastDiceRoll == null || lastDiceRoll < 6) {
+    status && (status.textContent = '스키퍼: 이번 차례 주사위가 6 이상일 때만 사용 가능');
+    return;
+  }
+  beginTricksterMenu(piece);
+  return;
+}
+
+     if (piece.name === '여왕개미') {
+  if (piece._usedThisTurn) {                         // ★ 이미 사용했으면 취소
+    status && (status.textContent = '여왕개미: 이번 차례에는 이미 능력을 사용했습니다');
+    return;
+  }
+  if (currentRound % 4 !== 0) {
+    status && (status.textContent = '여왕개미: 턴 수가 4의 배수일 때만 사용 가능');
+    return;
+  }
+
+  // 선택 팝업
+  popup.innerHTML = '<p class="font-bold mb-2">여왕개미 능력 (4턴마다 사용 가능)</p>';
+  const btn1 = document.createElement('button');
+  btn1.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
+  btn1.textContent = '개미 소환(3마리)';
+  btn1.onclick = () => {
+    const arr = [];
+    for (let i=0;i<3;i++) arr.push(spawnAntAt(piece.team, piece.x, piece.y));
+    if (!Array.isArray(piece._ants)) piece._ants = [];
+    piece._ants.push(...arr.map(a => a.id));
+    piece._usedThisTurn = true;                     // ★ 사용 처리
+    popup.style.display = 'none';
+    drawBoard();
+  };
+  popup.appendChild(btn1);
+
+  const btn2 = document.createElement('button');
+  btn2.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
+  btn2.textContent = '개미 강화(모든 개미 전투력 +0.25)';
+  btn2.onclick = () => {
+    for (const u of players) {
+      if (u.name === '개미' && u.team === piece.team) u.power = +((u.power ?? 1) + 0.25).toFixed(2);
+    }
+    piece._usedThisTurn = true;                     // ★ 사용 처리
+    popup.style.display = 'none';
+    drawBoard();
+  };
+  popup.appendChild(btn2);
+
+  popup.style.left = '50%';
+  popup.style.top  = '50%';
+  popup.style.transform = 'translate(-50%,-50%)';
+  popup.style.display = 'block';
+  return;
+}
+if (piece.name === '상인') {
+  if (piece._usedThisTurn) {
+    status && (status.textContent = '상인: 이번 차례에는 이미 사용했습니다');
+    return;
+  }
+  const candidates = players.filter(u =>
+    u.team === piece.team && u.id !== piece.id && u.name !== '왕' && !isCastle?.(u)
+  );
+  if (candidates.length === 0) {
+    status && (status.textContent = '상인: 제거할 수 있는 아군이 없습니다');
+    return;
+  }
+  const victim = candidates[Math.floor(Math.random() * candidates.length)];
+  const vx = victim.x, vy = victim.y;
+  const victimName = victim.name;
+
+  const roll = Math.random();
+  let spawnedName = '';
+  let newUnit = null;
+
+  if (roll < 0.45) { // 특수 45%
+    // '블레이즈 & 엠버' 제외 / '블레이즈', '엠버' 각각 포함(합쳐진 상태로 소환되지 않도록)
+    const specialPool = [...ALL_SPECIAL_NAMES.filter(n => n !== '블레이즈 & 엠버'), '블레이즈', '엠버', '개미'];
+    const pick = specialPool[Math.floor(Math.random() * specialPool.length)];
+    spawnedName = pick;
+    newUnit = createSpecialUnitByName(pick, piece.team);
+    if (newUnit) { newUnit.x = vx; newUnit.y = vy; }
+  } else { // 일반 55%
+    spawnedName = '일반 병사';
+    newUnit = {
+      id: `p${piece.team+1}-m-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '일반 병사',
+      team: piece.team,
+      x: vx, y: vy,
+      color: getTeamColor(piece.team),
+      power: 1, movement: 1, range: 0
+    };
+  }
+
+  removePlayer(victim, true);
+  if (newUnit) players.push(newUnit);
+
+  piece._usedThisTurn = true;
+  const tradeMsg = `상인: ${victimName} 제거 → ${spawnedName} 소환`;
+  drawBoard();
+  status && (status.textContent = tradeMsg);
+  showCenterMessage(tradeMsg, 2000);
+  flashCell(vx, vy, 1000);
+  setTimeout(() => { drawBoard(); }, 2000);
+  return;
+}
+      if (piece.name === '폼트랜서') {
+        if (currentRound % 3 !== 0) { status && (status.textContent = '폼트랜서: 턴 수가 3의 배수일 때만 변신 가능'); return; }
+        beginFormPick(piece);
+        return;
+      }
+    }
+// 성은 이동 불가
+if (typeof isCastle === 'function' && isCastle(piece)) return;
+
+// 블레이즈: 엠버와 같은 칸(패시브 발동 중)일 때만 주사위/에너지 없이 이동 가능
+const blazePassiveActive = (piece.name === '블레이즈' && piece._emberBoosted === true);
+if (!blazePassiveActive) {
+  if (!diceRolledThisTurn) return;
+  if (moveEnergy <= 0) return;
+}
+// 방향키 이동
+let dx = 0, dy = 0;
+if (e.key === 'ArrowUp')    { dy = -1; e.preventDefault(); }
+else if (e.key === 'ArrowDown'){ dy = 1; e.preventDefault(); }
+else if (e.key === 'ArrowLeft'){ dx = -1; e.preventDefault(); }
+else if (e.key === 'ArrowRight'){ dx = 1; e.preventDefault(); }
+else return;
+
+// 목적지 좌표 계산(★ 기존 코드엔 nx, ny가 없어서 에러 발생)
+const nx = piece.x + dx;
+const ny = piece.y + dy;
+
+// 개구리 범위 진입 차단
+if (isEnteringEnemyFrog?.(piece.x, piece.y, nx, ny, piece.team)) return;
+// 에너지/이동 가능 여부
+if (!canApplyStep(piece, dx, dy)) return;
+// 온라인: 내 차례 검증은 상단에서 처리됨
+applyStep(piece, dx, dy);
+  }, { passive: false });
+}
+
+    function manhattan(ax, ay, bx, by) {
+      return Math.abs(ax - bx) + Math.abs(ay - by);
+    }
+function applyEvolution(u){
+  switch(u.name){
+    case '광대':
+      return true;
+
+    case '고목':
+      if (typeof u._idleTurns !== 'number') u._idleTurns = 0;
+      u.power = u.range = Math.min(6, (u._idleTurns ?? 0) + 2);
+      return true;
+
+    case '닌자':
+      return true;
+
+    case '도박사':
+      // 진화 → 도박꾼 (스탯 동일)
+      u.name = '도박꾼';
+      u._evolved = true;
+      return true;
+
+    default:
+      status && (status.textContent = `${u.name}는 아직 진화 효과가 등록되지 않았습니다`);
+      return false;
+  }
+}
+function canEvolve(u){
+  if (!u || !isSpecialUnit(u) || u._evolved) return false;
+  // 실제로 구현된 진화만 허용
+  const implemented = new Set(['광대','고목','닌자','도박사']);
+  return implemented.has(u.name);
+}
+function resolveBattles() {
+  const byCell = new Map();
+  for (const p of players) {
+    const key = `${p.x},${p.y}`;
+    if (!byCell.has(key)) byCell.set(key, []);
+    byCell.get(key).push(p);
+  }
+
+  const toRemoveIds = new Set();
+
+  for (const [key, unitsAll] of byCell.entries()) {
+    const [cx, cy] = key.split(',').map(Number);
+
+    // 성 제외
+    const units = unitsAll.filter(u => !(typeof isCastle === 'function' && isCastle(u)));
+    if (units.length < 2) continue;
+
+    const teamsHere = [...new Set(units.map(u => u.team))];
+    if (teamsHere.length < 2) continue;
+
+    // 기본 전투력
+    const baseTeamPower = new Map();
+    for (const u of units) {
+      baseTeamPower.set(u.team, (baseTeamPower.get(u.team) || 0) + (u.power ?? 1));
+    }
+
+    // 지원 전투력(칸 외부)
+    const supportTeamPower = new Map();
+    for (const t of teamsHere) supportTeamPower.set(t, 0);
+    for (const s of players) {
+      if (typeof isCastle === 'function' && isCastle(s)) continue;
+      if (!teamsHere.includes(s.team)) continue;
+      if (s.x === cx && s.y === cy) continue;
+      const dist = Math.abs(s.x - cx) + Math.abs(s.y - cy);
+      if (dist <= (s.range ?? 0)) {
+        supportTeamPower.set(s.team, (supportTeamPower.get(s.team) || 0) + (s.power ?? 1));
+      }
+    }
+
+    // 광대 억제
+    const clownSuppressed = getClownSuppressionTeams(units);
+    for (const t of clownSuppressed) if (supportTeamPower.has(t)) supportTeamPower.set(t, 0);
+
+    // 최종 전투력
+    const finalTeamPower = new Map();
+    for (const t of teamsHere) {
+      finalTeamPower.set(t, (baseTeamPower.get(t) || 0) + (supportTeamPower.get(t) || 0));
+    }
+
+    const maxPower = Math.max(...finalTeamPower.values());
+    const winners = teamsHere.filter(t => finalTeamPower.get(t) === maxPower);
+
+    if (typeof showBattleIcon === 'function') showBattleIcon(cx, cy);
+
+    // 패배자
+    let losers;
+    if (winners.length !== 1) {
+      losers = [...units]; // 동률: 전부 패배
+    } else {
+      const winTeam = winners[0];
+      losers = units.filter(u => u.team !== winTeam);
+    }
+
+    // 일단 제거 예정
+    losers.forEach(u => toRemoveIds.add(u.id));
+    // 엠버 프렌드실드: 같은 칸에 블레이즈가 있고 엠버가 패배자면 무조건 생존 후 출발지점으로 귀환
+for (const u of losers) {
+  if (u.name === '엠버' && toRemoveIds.has(u.id)) {
+    const hasBlazeSameCell = units.some(w => w.team === u.team && w.name === '블레이즈' && w.x === cx && w.y === cy);
+    if (hasBlazeSameCell) {
+      const kp = getTeamStartPos(u.team);
+      if (kp) { u.x = kp.x; u.y = kp.y; }
+      toRemoveIds.delete(u.id);
+    }
+  }
+}
+    // 고양이: 전투 패배 시 무조건 생존 후 출발지점으로 귀환
+for (const u of losers) {
+  if (u.name === '고양이' && toRemoveIds.has(u.id)) {
+    const kp = getTeamStartPos(u.team);
+    if (kp) { u.x = kp.x; u.y = kp.y; }
+    toRemoveIds.delete(u.id);
+  }
+}
+    // 전투 칸에 의사 있는 팀은 구조 금지
+    const hasDoctorOnCell = new Set(
+      unitsAll.filter(u => u.name === '의사' && u.x === cx && u.y === cy).map(u => u.team)
+    );
+
+    // 의사 구조(사거리 2, 80%)
+    for (const u of losers) {
+      if (!toRemoveIds.has(u.id)) continue;
+      if (hasDoctorOnCell.has(u.team)) continue;
+      const docs = players.filter(p =>
+        p.team === u.team && p.name === '의사' &&
+        (Math.abs(p.x - cx) + Math.abs(p.y - cy) <= 2)
+      );
+      if (docs.length > 0 && Math.random() < 0.80) {
+        u.x = docs[0].x; u.y = docs[0].y;
+        toRemoveIds.delete(u.id);
+      }
+    }
+
+    // 좀비 전향(단일 승리팀, 왕 제외 1기)
+    if (winners.length === 1) {
+      const winTeam = winners[0];
+      const zombiesHere = units.filter(u => u.team === winTeam && u.name === '좀비');
+      if (zombiesHere.length > 0) {
+        const cand = losers.find(u => toRemoveIds.has(u.id) && u.name !== '왕');
+        if (cand) {
+          toRemoveIds.delete(cand.id);
+          cand.team = winTeam;
+          cand.color = getTeamColor(winTeam);
+        }
+      }
+    }
+
+    // 🔧 닌자(진화): 제거 대신 텔레포트 (이 칸 처리 안에서 수행)
+    for (const u of losers) {
+      if (!toRemoveIds.has(u.id)) continue;       // 이미 구조/전향으로 살았다면 패스
+      if (u.name === '닌자' && u._evolved) {
+        // 주변 맨해튼 2 이내 비점유 칸 수집
+        const spots = [];
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            if (Math.abs(dx) + Math.abs(dy) > 2) continue;
+            const xx = cx + dx, yy = cy + dy;
+            if (xx < 0 || yy < 0 || xx >= size || yy >= size) continue;
+            if (!cellOccupied(xx, yy)) spots.push({x:xx, y:yy});
+          }
+        }
+        if (spots.length > 0) {
+          const pick = spots[Math.floor(Math.random()*spots.length)];
+          u.x = pick.x; u.y = pick.y;
+        } else {
+          const kp = getTeamStartPos(u.team);
+          if (kp) { u.x = kp.x; u.y = kp.y; }
+        }
+        toRemoveIds.delete(u.id); // 제거 면제
+      }
+    }
+  }
+  // 실제 제거
+  if (toRemoveIds.size > 0) {
+    for (let i = players.length - 1; i >= 0; i--) {
+      if (toRemoveIds.has(players[i].id)) removePlayer(players[i]);
+    }
+  }
+}
+    function computeCellCombatStats(x, y) {
+  const unitsRaw = players.filter(p => p.x === x && p.y === y);
+  const units = unitsRaw.filter(u => !(typeof isCastle === 'function' && isCastle(u)));
+  const teamsHere = [...new Set(units.map(u => u.team))];
+
+  const stats = new Map();
+  for (const t of teamsHere) stats.set(t, { base: 0, support: 0, final: 0 });
+
+  // 기본 전투력
+  for (const u of units) {
+    const s = stats.get(u.team);
+    if (s) s.base += (u.power ?? 1);
+  }
+  const clownSuppressed = getClownSuppressionTeams(units);
+  // 지원 전투력: 해당 칸 외부 아군만
+  for (const ally of players) {
+    if (!(stats.has(ally.team))) continue;
+    if (typeof isCastle === 'function' && isCastle(ally)) continue;
+    if (ally.x === x && ally.y === y) continue;            // ⬅️ 칸 내부 제외
+    const dist = Math.abs(ally.x - x) + Math.abs(ally.y - y);
+    if (dist <= (ally.range ?? 0)) {
+      stats.get(ally.team).support += (ally.power ?? 1);
+    }
+  }
+  for (const t of clownSuppressed) if (stats.has(t)) stats.get(t).support = 0;
+  for (const t of teamsHere) {
+    const s = stats.get(t);
+    s.final = s.base + s.support;
+  }
+  return { teamsHere, stats };
+}
+
+// 턴 시작 패시브: 블레이즈/엠버
+function startOfTurnPassives(team){
+  // 2) 블레이즈: 같은 칸에 엠버가 있으면 '그 턴 동안' 전투력=4, 이동=0
+  const blazes = players.filter(u => u.team === team && u.name === '블레이즈' && u.x >= 0 && u.y >= 0);
+  for (const b of blazes) {
+    const sameCellEmber = players.some(u => u.team === team && u.name === '엠버' && u.x === b.x && u.y === b.y && u.x >= 0);
+    if (sameCellEmber) {
+      b._emberBoosted = true;
+      b.power = 4; b.movement = 0;
+    } else if (b._emberBoosted) {
+      b._emberBoosted = false;
+      b.power = 1; b.movement = 1;
+    }
+  }
+}
+    // ===== 승리 조건: 30점 선취 규칙 =====
+    function getTeamCorner(team) {
+      return {
+        x: team === 0 ? 0 : (team === 1 ? size - 1 : (team === 2 ? size - 1 : 0)),
+        y: team === 0 ? 0 : (team === 1 ? 0 : (team === 2 ? size - 1 : size - 1))
+      };
+    }
+    function teleportAllToStartCorners() {
+      for (const u of players) {
+        if (isCastle?.(u)) continue;       // 성(구조물)은 이동시키지 않음
+        if (u.x < 0 || u.y < 0) continue;  // 추방 등으로 보드 밖에 있는 말은 제외
+        const corner = getTeamCorner(u.team);
+        u.x = corner.x; u.y = corner.y;
+      }
+    }
+    function updateScoreBoard() {
+      if (!scoreBoard) return;
+      // 왕좌 쟁탈전: 점수제가 아니므로 점수판을 표시하지 않음
+      if (winMode === 'king') {
+        scoreBoard.style.display = 'none';
+        scoreBoard.innerHTML = '';
+        return;
+      }
+      scoreBoard.style.display = '';
+      const teamLabels = ['🔴 P1', '🟡 P2', '🔵 P3', '🟢 P4'];
+      const alive = (typeof getAliveTeams === 'function') ? getAliveTeams() : [0, 1, 2, 3];
+      scoreBoard.innerHTML = alive.map(t => `<span>${teamLabels[t]}: ${teamScores[t]}점</span>`).join('');
+    }
+    // 왼쪽 빈 공간에 현재 차례 팀의 "사용 가능한 액티브 스킬"과 "발동 중인 패시브"를 표시
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function getActivePassives(team) {
+      const passives = [];
+      const units = players.filter(u => u.team === team && u.x >= 0 && u.y >= 0);
+      for (const u of units) {
+        if (u.name === '블레이즈' && u._emberBoosted) {
+          passives.push({ icon: '🔥', text: '블레이즈: 엠버와 같은 칸 — 전투력 4 / 이동력 0' });
+        }
+        if (u.name === '엠버' && u._linkedBlazeId) {
+          passives.push({ icon: '🔗', text: '엠버: 블레이즈와 연결됨 — 이동 시 블레이즈가 함께 이동' });
+        }
+        if (u.name === '샤워기' && typeof isWaterPuddle === 'function' && isWaterPuddle(u.x, u.y)) {
+          passives.push({ icon: '🚿', text: '샤워기: 물 웅덩이 위 — 전투력 4 / 사거리 3' });
+        }
+        if ((u._cheerBuffVal ?? 0) > 0) {
+          passives.push({ icon: '📣', text: `${u.name}: 응원단장 버프 적용 중 (+${u._cheerBuffVal})` });
+        }
+        if (u.name === '눈사람' && ((u.power ?? 0) > 0 || (u.range ?? 0) > 1)) {
+          passives.push({ icon: '⛄', text: `눈사람: 눈덩이 습득 성장 — 전투력 ${u.power ?? 0} / 사거리 ${u.range ?? 0}` });
+        }
+        if (u.name === '고목' && (u.power ?? 0) > 1) {
+          passives.push({ icon: '🌳', text: `고목: 성장 — 전투력/사거리 ${u.power}` });
+        }
+      }
+      return passives;
+    }
+    function updateTurnSkillPanel() {
+      const panel = document.getElementById('turnSkillPanel');
+      if (!panel) return;
+      if (gameEnded) { panel.innerHTML = ''; return; }
+
+      const teamLabels = ['🔴 P1', '🟡 P2', '🔵 P3', '🟢 P4'];
+      const teamUnits = players.filter(u => u.team === currentTurn && u.x >= 0 && u.y >= 0);
+      const allSkills = (typeof getAvailableSkills === 'function') ? getAvailableSkills(teamUnits) : [];
+      const activeSkills = allSkills.filter(s => s.available);
+      const passives = getActivePassives(currentTurn);
+
+      const skillsHtml = activeSkills.length
+        ? activeSkills.map(s => `<div>${s.icon} <b>${escapeHtml(s.unitName)}</b> — ${escapeHtml(s.skillName)}</div>`).join('')
+        : '<div class="tsp-empty">없음</div>';
+      const passivesHtml = passives.length
+        ? passives.map(p => `<div>${p.icon} ${escapeHtml(p.text)}</div>`).join('')
+        : '<div class="tsp-empty">없음</div>';
+
+      panel.innerHTML = `
+        <div class="tsp-title">${teamLabels[currentTurn] ?? ''} 현재 차례</div>
+        <div class="tsp-section">⚡ 사용 가능한 액티브 스킬</div>
+        ${skillsHtml}
+        <div class="tsp-section">🌀 발동 중인 패시브</div>
+        ${passivesHtml}
+      `;
+    }
+    function checkScoreWin() {
+      if (gameEnded) return;
+      const winTeam = teamScores.findIndex(s => s >= 30);
+      if (winTeam === -1) return;
+      gameEnded = true;
+      const msg = `🏆 플레이어 ${winTeam + 1} 승리! (${teamScores[winTeam]}점 달성)`;
+      status && (status.textContent = msg);
+      if (defeatMsg) {
+        defeatMsg.textContent = msg;
+        defeatMsg.style.display = 'block';
+      }
+    }
+    // 턴이 끝날 때 정산: 가운데 칸 위에 말이 있는 모든 팀이 각자 말 개수만큼 점수 획득
+    function settleCenterScores() {
+      if (gameEnded) return;
+      for (let t = 0; t < 4; t++) {
+        const gained = players.filter(p => p.team === t && isCenterCell(p.x, p.y) && !isCastle(p)).length;
+        if (gained > 0) teamScores[t] += gained;
+      }
+
+      if (!scoreResetDone10 && teamScores.some(s => s >= 10)) {
+        scoreResetDone10 = true;
+        teleportAllToStartCorners();
+      }
+      if (!scoreResetDone20 && teamScores.some(s => s >= 20)) {
+        scoreResetDone20 = true;
+        teleportAllToStartCorners();
+      }
+      checkScoreWin();
+      updateScoreBoard();
+    }
+    function removePlayer(p, suppressMsg = false) {
+  const index = players.indexOf(p);
+  if (index === -1) return;
+  players.splice(index, 1);
+      if (p.name === '여왕개미') {
+  for (let i = players.length - 1; i >= 0; i--) {
+    if (players[i].team === p.team && players[i].name === '개미') players.splice(i,1);
+  }
+}
+  if (p.name === '왕') {
+    for (let i = players.length - 1; i >= 0; i--) {
+      if (players[i].team === p.team && players[i].name !== '성') players.splice(i, 1);
+    }
+    if (!suppressMsg) {
+      defeatMsg.textContent = `플레이어 ${p.team + 1}가 패배하였습니다`;
+      defeatMsg.style.display = 'block';
+      setTimeout(() => { defeatMsg.style.display = 'none'; }, 3000);
+    }
+  }
+}
+
+    function showBattleIcon(x, y) {
+      const icon = document.createElement('div');
+      icon.className = 'battle-icon';
+      icon.style.left = `${x * 64 + 16}px`;
+      icon.style.top = `${y * 64 + 16}px`;
+      document.body.appendChild(icon);
+      setTimeout(() => icon.remove(), 1000);
+    }
+
+    // ✅ 턴 종료: 전투 정산 → 생존 팀으로 턴 이동 → 상태 초기화
+function endTurn() {
+  if (gameEnded) return;
+  pushSnapshot('endTurn');
+  if (typeof resolveBattles === 'function') resolveBattles();
+
+  clearCartLinkForTeam?.(currentTurn);
+  applyGomokEffects(currentTurn);
+
+  revertFormForTeam(currentTurn);
+  for (const u of players) {
+  if (u.team === currentTurn) {
+    if (u.name === '스키퍼') u._usedThisTurn = false;
+    if (u.name === '상인') u._usedThisTurn = false;
+    if (u.name === '여왕개미') u._usedThisTurn = false;
+    if (u.name === '비숍') u._usedThisTurn = false; // ← 추가
+    if (u.name === '샤워기') u._usedThisTurn = false;
+  }
+}
+
+// 승리 판정: 점령전(가운데 칸 점수 30점 선취) / 왕좌 쟁탈전(마지막 생존 팀)
+if (winMode === 'king') {
+  checkKingWin();
+} else {
+  settleCenterScores();
+}
+if (gameEnded) { drawBoard(); return; }
+
+const prevTeam = currentTurn;
+
+// 다음 턴 계산(기존 activeTeams/next 계산 로직 그대로 사용)
+const activeTeams = getActiveTeams();
+if (activeTeams.length === 0) {
+  status && (status.textContent = '진행 가능한 팀이 없습니다');
+  drawBoard();
+  return;
+}
+let next = currentTurn;
+for (let i = 0; i < 4; i++) {
+  next = (next + 1) % 4;
+  if (activeTeams.includes(next)) break;
+}
+currentTurn = activeTeams.includes(next) ? next : activeTeams[0];
+if (currentTurn === 0) currentRound++;
+
+// 이전 팀의 일회성 상태 리셋(블레이즈 버프, 트럭 플래그 등)
+for (const u of players) {
+  if (u.team === prevTeam && u.name === '블레이즈' && u._emberBoosted) {
+    u._emberBoosted = false; u.power = 1; u.movement = 1;
+  }
+  if (u.team === prevTeam && u.name === '트럭 운전사') {
+    u._truckUsedThisTurn = false;
+  }
+}
+// 이전 팀 버프 제거 → 새 팀 버프 적용
+clearCheerBuffsForTeam(prevTeam);
+applyCheerBuffsForTeam(currentTurn);
+startOfTurnPassives(currentTurn);
+processBanishedReturns(currentTurn);
+
+// 이하 기존 UI/상태 초기화 유지
+hasMovedThisTurn = false;
+diceRolledThisTurn = false;
+moveEnergy = 0;
+ninjaSwappedThisTurn = false;
+selectedPlayerId = null;
+diceResult.textContent = '';
+moveEnergyDisplay.textContent = `남은 이동 에너지: ${moveEnergy}`;
+checkSnowballInteractions();
+drawBoard();
+
+// 온라인 동기화 유지
+if (online) {
+  const state = toRoomState();
+  broadcast({ t: 'SYNC', state, hash: hashState() });
+}
+updateBlazeEmberAura();
+}
+function resetOncePerTurnSkillsForTeam(team) {
+  players.forEach(u => {
+    if (u.team !== team) return;
+    if (u.name === '상인') u._usedThisTurn = false;     // 기존
+    if (u.name === '스키퍼') u._usedThisTurn = false;   // ★ 추가
+    if (u.name === '여왕개미') u._usedThisTurn = false; // ★ 추가
+  });
+}
+function spawnAntAt(team, x, y) {
+  const ant = {
+    id: `ant-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    name: '개미', team, x, y,
+    color: getTeamColor(team),
+    power: 1, movement: 1, range: 0, type: 'antling'
+  };
+  players.push(ant);
+  return ant;
+}
+
+
+  function hasReaper(team) {
+    return players.some(p => p.team === team && p.name === '사신');
+  }
+
+  function hasOrca(team) { return players.some(p => p.team === team && p.name === '범고래'); }
+
+  const ninjaSwap = { active: false, ninjaId: null };
+function isAlone(piece) { return players.filter(u => u.x === piece.x && u.y === piece.y).length === 1; }
+function beginNinjaSwap(ninja) { ninjaSwap.active = true; ninjaSwap.ninjaId = ninja.id; status && (status.textContent = '닌자 스왑 대상 선택: 상대 말을 클릭하세요 (P로 취소)'); }
+let ninjaSwappedThisTurn = false;
+  const cartLink = { active: false, pusherId: null, mateId: null, roundTagged: null };
+function beginCartLink(pusher) { cartLink.active = true; cartLink.pusherId = pusher.id; cartLink.mateId = null; cartLink.roundTagged = currentRound; status && (status.textContent = '같은 칸의 아군을 선택하세요 (P로 취소)'); }
+function setCartMate(mate) { cartLink.mateId = mate.id; cartLink.active = false; status && (status.textContent = '연결 완료: 함께 이동합니다 (L로 해제)'); }
+function cancelCartLink() { cartLink.active = false; cartLink.pusherId = null; cartLink.mateId = null; cartLink.roundTagged = null; status && (status.textContent = '연결 취소'); }
+function clearCartLinkForTeam(team) {
+  if (!cartLink.pusherId) return;
+  const pusher = players.find(p => p.id === cartLink.pusherId);
+  if (!pusher || pusher.team !== team) return;
+  cancelCartLink();
+}
+function updateCartLinkIndicator() {
+  if (!cartLinkIndicator) return;
+  if (!cartLink.pusherId) { cartLinkIndicator.textContent = ''; return; }
+  cartLinkIndicator.textContent = cartLink.mateId
+    ? '🛒 수레꾼 연결됨'
+    : '🛒 수레꾼 대상 선택 중';
+}
+const formTrans = { picking: false, trancerId: null };
+
+function beginFormPick(trancer) {
+  formTrans.picking = true;
+  formTrans.trancerId = trancer.id;
+  status && (status.textContent = '폼트랜서: 변신할 특수 병사를 클릭하세요 (왕/일반/성 제외, 같은 팀도 가능)');
+}
+
+function cancelFormPick() {
+  formTrans.picking = false;
+  formTrans.trancerId = null;
+  status && (status.textContent = '');
+}
+
+function tryFormTransform(target) {
+  if (!formTrans.picking) return false;
+  const f = players.find(p => p.id === formTrans.trancerId);
+  if (!f) { cancelFormPick(); return true; }
+  // 조건: 특수 병사만(성/왕/일반 제외)
+  if (!isSpecialUnit(target)) { status && (status.textContent = '특수 병사만 변신 대상입니다'); return true; }
+
+  // 원형 저장(이번 턴만 유지)
+  f._form = {
+    name: '폼트랜서', type: 'formtrancer',
+    power: f.power, range: f.range, movement: f.movement,
+    tags: Array.isArray(f.tags) ? [...f.tags] : []
+  };
+  // 대상 능력 복사
+  f.name = target.name;
+  f.type = target.type;
+  f.power = target.power;
+  f.range = target.range;
+  f.movement = target.movement;
+  f.tags = Array.isArray(target.tags) ? [...target.tags] : [];
+
+  cancelFormPick();
+  drawBoard();
+  return true;
+}
+
+  function applyGomokEffects(team){
+  const gomoks = players.filter(p => p.team === team && p.name === '고목');
+  for (const g of gomoks) {
+    if (g._evolved) {
+      // 진화: 안 움직였으면 idle++, 움직였으면 0. 능력은 (idle + 2), 최대 6
+      if (typeof g._idleTurns !== 'number') g._idleTurns = 0;
+      if (g._movedThisTurn) g._idleTurns = 0; else g._idleTurns++;
+      const v = Math.min(6, (g._idleTurns ?? 0) + 2);
+      g.power = v; g.range = v;
+      g._movedThisTurn = false;
+    } else {
+      // 기존 규칙(비진화): 안 움직이면 +1씩(최대 4), 움직였으면 1/1
+      if (g._movedThisTurn) {
+        g.power = 1; g.range = 1;
+      } else {
+        g.power = Math.min(4, (g.power ?? 1) + 1);
+        g.range = Math.min(4, (g.range ?? 1) + 1);
+      }
+      g._movedThisTurn = false;
+    }
+  }
+}
+  function isCastle(u) { return u && u.name === '성'; }
+function getTeamCastles(team) { return players.filter(p => isCastle(p) && p.team === team); }
+function countCastles(team) { return getTeamCastles(team).length; }
+function hasCastleAt(team, x, y) { return players.some(p => isCastle(p) && p.team === team && p.x === x && p.y === y); }
+function addCastle(team, x, y) {
+  players.push({
+    id: `castle-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    name: '성', team, x, y,
+    color: getTeamColor(team),
+    power: 0, movement: 0, range: 0, type: 'castle'
+  });
+}
+  // ✅ 추가: 성 텔레포트 상태
+const castleTeleport = { active: false, pieceId: null, team: null, fromXY: null };
+function beginCastleTeleport(piece) {
+  castleTeleport.active = true;
+  castleTeleport.pieceId = piece.id;
+  castleTeleport.team = piece.team;
+  castleTeleport.fromXY = { x: piece.x, y: piece.y };
+  status && (status.textContent = '성 텔레포트 대상 성을 선택하세요 (P로 취소)');
+}
+function cancelCastleTeleport() {
+  castleTeleport.active = false;
+  castleTeleport.pieceId = null;
+  castleTeleport.team = null;
+  castleTeleport.fromXY = null;
+  status && (status.textContent = '성 텔레포트 취소');
+}
+function performCastleTeleport(targetCastle) {
+  const piece = players.find(p => p.id === castleTeleport.pieceId);
+  if (!piece || !isCastle(targetCastle) || targetCastle.team !== castleTeleport.team) return;
+  piece.x = targetCastle.x;
+  piece.y = targetCastle.y;
+  cancelCastleTeleport();
+  popup && (popup.style.display = 'none');
+  drawBoard();
+}
+  const keeperChoice = { active: false, keeperId: null };
+function beginKeeperChoice(piece) {
+  keeperChoice.active = true; keeperChoice.keeperId = piece.id;
+  popup.innerHTML = '<p class="font-bold mb-2">변신 선택</p>';
+  ['사육사','코끼리','고양이','개구리'].forEach(label => {
+    const btn = document.createElement('button');
+    btn.type='button';
+    btn.className='block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
+    btn.textContent = label;
+    btn.onclick = () => performKeeperTransform(label);
+    popup.appendChild(btn);
+  });
+  popup.style.left = '50%'; popup.style.top = '50%';
+  popup.style.transform = 'translate(-50%,-50%)'; popup.style.display='block';
+  try { popup.dataset.lock = '1'; } catch(e){}
+}
+function performKeeperTransform(label) {
+  if (!keeperChoice.active || !keeperChoice.keeperId) return;
+  const unit = players.find(p => p.id === keeperChoice.keeperId);
+  if (!unit) { keeperChoice.active = false; keeperChoice.keeperId = null; return; }
+
+  // 변신 스펙(필요시 숫자는 조정 가능)
+  const FORM = {
+    '사육사': { power: 1, movement: 1, range: 0, type: 'zookeeper' },
+    '코끼리': { power: 3, movement: 2, range: 0, type: 'elephant' },
+    '고양이': { power: 1, movement: 0.5, range: 1, type: 'cat' },
+    '개구리': { power: 0.5, movement: 1, range: 2, type: 'frog' } // 개구리 제어에 range 사용됨
+  };
+  const spec = FORM[label];
+  if (!spec) return;
+
+  unit.name     = label;
+  unit.type     = spec.type;
+  unit.power    = spec.power;
+  unit.movement = spec.movement;
+  unit.range    = spec.range;
+
+  if (!Array.isArray(unit.tags)) unit.tags = [];
+  unit.tags = unit.tags.filter(t => t !== '친수성');
+  if (label === '개구리') unit.tags.push('친수성');
+
+  keeperChoice.active = false;
+  keeperChoice.keeperId = null;
+  try { popup.dataset.lock = '0'; } catch(e){}
+  popup.style.display = 'none';
+  drawBoard();
+}
+
+
+function performNinjaSwap(target) {
+  const ninja = players.find(p => p.id === ninjaSwap.ninjaId);
+  if (!ninja || ninjaSwappedThisTurn) return;
+  if (target.team === ninja.team) return;
+  if (target.name === '왕') return;
+  const dist = Math.abs(ninja.x - target.x) + Math.abs(ninja.y - target.y);
+  if (dist > (ninja.range ?? 0)) return;
+
+  const { x: nx, y: ny } = ninja;
+  ninja.x = target.x; ninja.y = target.y;
+  target.x = nx; target.y = ny;
+
+  ninjaSwappedThisTurn = true;           // ⬅️ 사용 처리
+  ninjaSwap.active = false; ninjaSwap.ninjaId = null;
+  if (popup) popup.style.display = 'none';
+  drawBoard();
+}
+  // 물 웅덩이: '친수성' 태그가 있는 말만 위에 있을 수 있음(샤워기/개구리/고목/범고래)
+  const HYDROPHILIC_NAMES = new Set(['샤워기', '고목', '개구리', '범고래']);
+  function isWaterPuddle(x, y) { return waterPuddles.some(w => w.x === x && w.y === y); }
+  function canStandOnWaterPuddle(unit) {
+    return !!unit && Array.isArray(unit.tags) && unit.tags.includes('친수성');
+  }
+  function isEnteringEnemyFrog(fromX, fromY, toX, toY, myTeam) {
+  let fromIn = false, toIn = false;
+  for (const u of players) {
+    if (u.name !== '개구리' || u.team === myTeam) continue;
+    const dFrom = Math.abs(u.x - fromX) + Math.abs(u.y - fromY);
+    const dTo = Math.abs(u.x - toX) + Math.abs(u.y - toY);
+    if (dFrom <= (u.range ?? 0)) fromIn = true;
+    if (dTo <= (u.range ?? 0)) toIn = true;
+    if (fromIn && toIn) break;
+  }
+  // 이미 범위 안에 있으면 그 범위 안에서 자유 이동 허용(차단 X)
+  if (fromIn) return false;
+  // 밖에서 안으로 '진입'만 차단
+  return toIn;
+}
+  function isSpecialUnit(u) {
+  if (!u) return false;
+  const names = new Set([
+    '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼','의사',
+    '좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인', '응원단장',
+    '트럭 운전사','블레이즈 & 엠버','블레이즈','엠버','비숍','샤워기',
+    '코끼리','고양이','개구리'
+  ]);
+  return names.has(u.name);
+}
+  function startSpecialDraft() {
+  markSpecialTags?.();
+  attachDraftKeyHandler();
+  specialDraft.active = true;
+  draftSignals.peersReady.clear();
+  draftSignals.finalized = false;
+
+try { popup.dataset.lock = '1'; } catch(e){}
+  // ✅ 오프라인(로컬) → 턴 방식 강제, 온라인 → 동시
+  specialDraft.mode = online ? 'simul' : 'turn';
+
+  specialDraft.chosenCount = [0,0,0,0];
+  specialDraft.chosenIds = new Set();
+  specialDraft.focusId = null;
+  specialDraft.pageByTeam = {0:0,1:0,2:0,3:0};
+  // 팀별 확인 여부는 더 이상 사용하지 않습니다
+  const teams = draftEligibleTeams();
+if (teams.length === 0) { specialDraft.active = false; return; }
+specialDraft.team = teams[0];
+
+  if (online) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+  }
+  renderSpecialDraft();
+}
+  function myOwnedTeams() {
+  if (!online) return getAliveTeams();              // 오프라인: 모두 조작 가능
+  const mine = [];
+  for (const t of [0,1,2,3]) {
+    if (owners?.[String(t)] && owners[String(t)] === myPeerId && isTeamAlive(t)) mine.push(t);
+  }
+  return mine;
+}
+function nextOwnedTeamNeedingPicks() {
+  // 내가 소유한 팀 중 아직 4개를 다 고르지 않은 팀을 우선 반환
+  const mine = myOwnedTeams();
+  for (const t of mine) {
+    if ((specialDraft.chosenCount[t] || 0) < 4) return t;
+  }
+  // 모두 4개를 채웠다면 첫 팀을 반환(없으면 null)
+  return mine[0] ?? null;
+}
+
+function aliveTeamsNeedingPicks() {
+  return draftEligibleTeams().filter(t => (specialDraft.chosenCount[t]||0) < 4);
+}
+// 모든 활성(드래프트 대상) 팀이 '확인 버튼을 눌렀거나(완료 체크)',
+// 혹은 '선택 수가 4개에 도달'했는지 검증
+function allTeamsReady() {
+  const teams = draftEligibleTeams();
+  return teams.every(t => (specialDraft.doneByTeam[t] === true) || ((specialDraft.chosenCount?.[t] || 0) >= 4));
+}
+function allTeamsDone() {
+  const teams = draftEligibleTeams();
+  return teams.every(t => specialDraft.doneByTeam[t] === true);
+}
+// 한 팀 기준으로 5개 페이징
+function pagedSpecialList(team) {
+  const all = players.filter(u => u.team === team && isSpecialUnit(u));
+  const unchosen = all.filter(u => !specialDraft.chosenIds.has(u.id));
+
+  const page = specialDraft.pageByTeam[team] || 0;
+  const pageSize = 5;
+  const start = page * pageSize;
+  const end = start + pageSize;
+
+  return {
+    total: unchosen.length,
+    page,
+    pageSize,
+    items: unchosen.slice(start, end),
+    pageCount: Math.max(1, Math.ceil(unchosen.length / pageSize))
+  };
+}
+
+function goPage(team, delta) {
+  const info = pagedSpecialList(team);
+  let next = info.page + delta;
+  if (next < 0) next = 0;
+  if (next > info.pageCount - 1) next = info.pageCount - 1;
+  specialDraft.pageByTeam[team] = next;
+  renderSpecialDraft();
+}
+function renderSpecialDraft() {
+  if (!specialDraft.active) return;
+  let myTeam = null;
+if (specialDraft.mode === 'turn' || !online) {
+  myTeam = specialDraft.team;
+} else {
+  myTeam = nextOwnedTeamNeedingPicks();
+}
+
+const iCanPick =
+  myTeam != null &&
+  isTeamAlive(myTeam);
+  // 온라인에서 아직 팀을 점유하지 않은 참가자에게는 팀 선택 UI 제공
+if (online && (myTeam == null || !iCanPick)) {
+  showTeamClaimUIForDraft();
+  return;
+    status && (status.textContent = '상단 "팀 배정"에서 본인 팀을 선택한 뒤 특수 병사를 고르세요');
+
+}
+  popup.innerHTML = '';
+
+  if (iCanPick) {
+    const chosen = specialDraft.chosenCount[myTeam] || 0;
+    if (draftSignals.peersReady.has(myPeerId)) {
+  popup.style.display = 'none';
+  updateDraftWaitingStatus();
+  return;
+}
+
+    // ✅ 페이지: '아직 선택하지 않은' 목록
+    const info = pagedSpecialList(myTeam);
+    const title = document.createElement('p');
+    title.className = 'font-bold mb-2';
+    title.textContent = `플레이어 ${myTeam+1} 특수 병사 선택 (선택 ${chosen}/4)`;
+    popup.appendChild(title);
+
+    // ⬇️ "현재 선택" 섹션 (해제 가능)
+    const pickedNow = players
+      .filter(u => u.team === myTeam && isSpecialUnit(u))
+      .filter(u => specialDraft.chosenIds.has(u.id));
+
+    const pickedBox = document.createElement('div');
+    pickedBox.className = 'mb-2';
+    const pickedTitle = document.createElement('div');
+    pickedTitle.className = 'text-sm text-gray-300 mb-1';
+    pickedTitle.textContent = '현재 선택 (클릭 시 해제)';
+    pickedBox.appendChild(pickedTitle);
+
+    if (pickedNow.length === 0) {
+      const p = document.createElement('div');
+      p.className = 'text-sm text-gray-400';
+      p.textContent = '선택된 병사가 없습니다';
+      pickedBox.appendChild(p);
+    } else {
+      pickedNow.forEach(u => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
+        btn.textContent = `✓ ${u.name} - 팀 ${u.team+1} / 전:${u.power} / 이:${u.movement} / 사:${u.range} (해제)`;
+        btn.onclick = (e) => { e.stopPropagation(); togglePickSpecial(u.id); };
+        pickedBox.appendChild(btn);
+      });
+    }
+    popup.appendChild(pickedBox);
+
+    // ⬇️ 페이징 + 아직 선택 안 한 목록 (클릭 시 '선택')
+    const topBar = document.createElement('div');
+    topBar.className = 'flex items-center justify-between mb-2';
+    const prev = document.createElement('button');
+    prev.className = 'px-2 py-1 rounded border border-gray-600';
+    prev.textContent = '← 이전';
+    prev.onclick = (e)=>{ e.stopPropagation(); goPage(myTeam, -1); };
+    const pageLabel = document.createElement('span');
+    pageLabel.className = 'text-sm text-gray-300';
+    pageLabel.textContent = `페이지 ${info.page+1} / ${info.pageCount}`;
+    const next = document.createElement('button');
+    next.className = 'px-2 py-1 rounded border border-gray-600';
+    next.textContent = '다음 →';
+    next.onclick = (e)=>{ e.stopPropagation(); goPage(myTeam, +1); };
+    topBar.appendChild(prev); topBar.appendChild(pageLabel); topBar.appendChild(next);
+    popup.appendChild(topBar);
+
+    if (info.total === 0) {
+      const p = document.createElement('p');
+      p.textContent = '선택 가능한 특수 병사가 없습니다';
+      popup.appendChild(p);
+    } else {
+      info.items.forEach(u => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
+        btn.textContent = `${u.name} - 팀 ${u.team+1} / 전:${u.power} / 이:${u.movement} / 사:${u.range} (선택)`;
+        btn.onclick = (e) => { e.stopPropagation(); togglePickSpecial(u.id); };
+        popup.appendChild(btn);
+      });
+    }
+const canConfirm = (specialDraft.chosenCount[myTeam] === 4);
+const confirm = document.createElement('button');
+confirm.type = 'button';
+confirm.className =
+  `mt-3 block w-full px-3 py-2 rounded ${
+    canConfirm ? 'bg-indigo-500 text-white' : 'bg-gray-700 text-gray-300 cursor-not-allowed'
+  }`;
+confirm.textContent =
+  specialDraft.mode === 'turn'
+    ? (canConfirm ? '이 팀 선택 확인' : '4개를 먼저 선택하세요')
+    : (canConfirm ? '내 선택 확인' : '4개를 먼저 선택하세요');
+
+confirm.disabled = !canConfirm;
+confirm.onclick = () => {
+  if (!canConfirm) return;
+
+  if (online) {
+    try {
+      // 내 팀 선택 결과를 확정과 함께 제출
+      const ids = chosenIdsForTeam(myTeam);
+      specialDraft.doneByTeam[myTeam] = true;
+      broadcast({ t:'DRAFT_SUBMIT', from: myPeerId, team: myTeam, ids });
+
+      // 준비 완료 신호
+      draftSignals.peersReady.add(myPeerId);
+      broadcast({ t:'DRAFT_READY', from: myPeerId });
+    } catch(e) {}
+
+    popup.style.display = 'none';
+    updateDraftWaitingStatus();
+    checkDraftFinalize();
+    renderSpecialDraft();
+    return;
+  }
+
+  if (specialDraft.mode === 'turn') {
+    advanceDraftTeam();
+  }
+};
+
+popup.appendChild(confirm);
+
+  } else {
+  // 완료 n / 총 m + 모두가 누를 수 있는 '내 선택 확인' 버튼
+  const box = document.createElement('div');
+  box.innerHTML = `<p class="font-bold mb-2">특수 병사 드래프트 진행 중</p>`;
+const total = connectedPeerCount();         // ✅ 모든 접속자 수
+const done  = draftSignals.peersReady.size; // ✅ 확인 누른 접속자 수
+
+  const p = document.createElement('p');
+  p.className = 'text-sm';
+  p.textContent = `완료 ${done} / 총 ${total} — 각자 '내 선택 확인'을 누르면 시작합니다 (모든 팀은 4개씩 선택되어야 함)`;
+  box.appendChild(p);
+
+  const confirm = document.createElement('button');
+  confirm.type = 'button';
+  confirm.className = 'mt-3 block w-full px-3 py-2 rounded bg-indigo-500 text-white';
+  confirm.textContent = '내 선택 확인';
+  confirm.onclick = () => {
+    try {
+      draftSignals.peersReady.add(myPeerId);
+      broadcast({ t:'DRAFT_READY', from: myPeerId });
+    } catch(e) {}
+    renderSpecialDraft();
+  };
+  box.appendChild(confirm);
+
+  popup.appendChild(box);
+
+  // 중앙 고정
+  popup.style.display = 'block';
+  popup.style.maxHeight = '70vh';
+  popup.style.overflowY = 'auto';
+  popup.style.left = '50%';
+  popup.style.top  = '50%';
+  popup.style.transform = 'translate(-50%, -50%)';
+}
+
+  // 중앙 고정
+  popup.style.display = 'block';
+  popup.style.maxHeight = '70vh';
+  popup.style.overflowY = 'auto';
+  popup.style.left = '50%';
+  popup.style.top  = '50%';
+  popup.style.transform = 'translate(-50%, -50%)';
+}
+// ✅ 추가: 폼트랜서 선택 → Q → 다른 특수 병사 선택 시 그 말로 변신(해당 차례만)
+function beginFormtranceChoose(former){
+  // 목록: 다른 특수 병사
+  const list = players.filter(u =>
+    u.id !== former.id &&
+    isSpecialUnit(u) &&
+    u.name !== '성'
+  );
+  if (list.length === 0) { status && (status.textContent='변신 대상이 없습니다'); return; }
+
+  popup.innerHTML = `<p class="font-bold mb-2">변신 대상 선택</p>`;
+  list.forEach(u=>{
+    const btn = document.createElement('button');
+    btn.type='button';
+    btn.className='block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
+    btn.textContent = `${u.name} - 팀 ${u.team+1} / 전:${u.power} / 이:${u.movement} / 사:${u.range}`;
+    btn.onclick = ()=> {
+      pushSnapshot('formtrance');
+      performFormtrance(former, u);
+      popup.style.display='none';
+      drawBoard();
+    };
+    popup.appendChild(btn);
+  });
+
+  // 보드 중앙
+  popup.style.display='block';
+  popup.style.maxHeight='70vh';
+  popup.style.overflowY='auto';
+  popup.style.transform='';
+  const rect = popup.getBoundingClientRect();
+  const b = board.getBoundingClientRect();
+  popup.style.left = `${Math.max(8, b.left+(b.width-rect.width)/2)}px`;
+  popup.style.top  = `${Math.max(8, b.top +(b.height-rect.height)/2)}px`;
+}
+function performFormtrance(former, target){
+  if (!former._form) {
+    former._form = {
+      power: former.power, range: former.range, movement: former.movement,
+      tags: Array.isArray(former.tags)? [...former.tags] : []
+    };
+  }
+  former.name = target.name;
+  former.type = target.type;
+  former.power = target.power;
+  former.range = target.range;
+  former.movement = target.movement;
+  former.tags = Array.isArray(target.tags)? [...target.tags] : [];
+}
+// endTurn() 안의 revertFormForTeam(currentTurn)는 그대로 두면, 변신이 그 차례 끝에 원복됩니다.
+function beginQueenMenu(queen){
+  popup.innerHTML = `<p class="font-bold mb-2">여왕개미</p>`;
+  const summon = document.createElement('button');
+  summon.className='block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
+  summon.textContent='개미 소환 (3마리)';
+  summon.onclick = ()=>{
+    pushSnapshot('queen-summon');
+    summonAntsForQueen(queen, 3);
+    queen._usedThisTurn = true;
+    try { popup.dataset.lock = '0'; } catch(e){}
+    popup.style.display='none'; drawBoard();
+  };
+  const buff = document.createElement('button');
+  buff.className='block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
+  buff.textContent='개미 강화 (+0.25 전투력, 모든 자신의 개미)';
+  buff.onclick = ()=>{
+    pushSnapshot('queen-buff');
+    buffAntsForQueen(queen, 0.25);
+    queen._usedThisTurn = true;
+    try { popup.dataset.lock = '0'; } catch(e){}
+    popup.style.display='none'; drawBoard();
+  };
+  popup.appendChild(summon); popup.appendChild(buff);
+
+  // 보드 중앙
+  popup.style.display='block';
+  try { popup.dataset.lock = '1'; } catch(e){} // drawBoard가 즉시 닫지 않도록 잠금(스킬창 경유 시 lock이 이미 풀려있을 수 있음)
+  popup.style.transform='';
+  const rect = popup.getBoundingClientRect();
+  const b = board.getBoundingClientRect();
+  popup.style.left = `${Math.max(8, b.left+(b.width-rect.width)/2)}px`;
+  popup.style.top  = `${Math.max(8, b.top +(b.height-rect.height)/2)}px`;
+}
+function summonAntsForQueen(queen, n=3){
+  for (let i=0;i<n;i++){
+    const ant = {
+      id:`ant-${queen.team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name:'개미', team:queen.team, x:queen.x, y:queen.y, color:getTeamColor(queen.team),
+      power:1, range:0, movement:1, type:'ant', parentId: queen.id
+    };
+    players.push(ant);
+    if (!Array.isArray(queen._ants)) queen._ants=[];
+    queen._ants.push(ant.id);
+  }
+}
+function buffAntsForQueen(queen, delta){
+  for (const u of players) {
+    if (u.type === 'ant' && u.parentId === queen.id) {
+      u.power = +( (u.power ?? 1) + delta ).toFixed(3);
+    }
+  }
+}
+
+  function advanceDraftTeam() {
+  if (!specialDraft.active) return;
+  const next = nextDraftTeam(specialDraft.team);
+  if (next == null) {
+    setTimeout(finalizeSpecialDraft, 0);
+    return;
+  }
+  specialDraft.team = next;
+  specialDraft.focusId = null;
+  // ✅ 즉시 렌더로 다음 팀 화면 보장
+  renderSpecialDraft();
+}
+  function markSpecialTags() {
+  players.forEach(u => {
+    if (isSpecialUnit(u)) {
+      if (!Array.isArray(u.tags)) u.tags = [];
+      if (!u.tags.includes('특수 병사')) u.tags.push('특수 병사');
+    }
+  });
+}
+function askPlayerCountAndCullTeams() {
+  let cnt = null;
+  while (cnt === null) {
+    const input = prompt('플레이어 수를 선택하세요 (2, 3, 4):', '4');
+    if (input === null) { cnt = 4; break; }
+    const n = Number(input);
+    if ([2,3,4].includes(n)) { cnt = n; break; }
+    alert('2, 3, 4 중 하나를 입력해 주세요.');
+  }
+
+  // 왕이 있던 시절엔 왕을 제거하면 removePlayer()가 팀 전체를 함께 지워줬지만,
+  // 이제 왕이 존재하지 않으므로 제외할 팀의 말을 직접 전부 제거한다.
+  function removeTeamCompletely(teamIdx) {
+    for (let i = players.length - 1; i >= 0; i--) {
+      if (players[i].team === teamIdx) players.splice(i, 1);
+    }
+  }
+
+  if (cnt === 2) {
+    removeTeamCompletely(1);
+    removeTeamCompletely(3);
+  } else if (cnt === 3) {
+    removeTeamCompletely(3);
+  }
+
+  resetTurnToFirstAlive();
+  drawBoard();
+}
+function resetTurnToFirstAlive() {
+  const active = getActiveTeams().sort((a,b)=>a-b);
+  if (active.length === 0) return;
+  currentTurn = active[0];
+  currentRound = 1;
+  diceRolledThisTurn = false;
+  moveEnergy = 0;
+  selectedPlayerId = null;
+  diceResult.textContent = '';
+  moveEnergyDisplay.textContent = `남은 이동 에너지: ${moveEnergy}`;
+  applyCheerBuffsForTeam(currentTurn);
+}
+
+function isTeamAlive(team) {
+  return players.some(p => p.team === team && p.name !== '성');
+}
+function getAliveTeams() {
+  const s = new Set(players.map(p => p.team));
+  return [...s].filter(t => isTeamAlive(t)).sort((a,b)=>a-b);
+}
+function isTeamActive(team){
+  if (!isTeamAlive(team)) return false;       // 기본 생존 조건
+  if (!online) return true;                   // 오프라인은 모두 활성
+  return !!(owners && owners[String(team)]);  // 온라인: 소유자(선택자)가 있는 팀만 활성
+}
+function getActiveTeams(){
+  // 기본: 생존 팀
+  const alive = [0,1,2,3].filter(isTeamAlive);
+  if (!online) return alive;
+
+  // 온라인: 소유된 팀을 우선 사용
+  const owned = alive.filter(t => owners && owners[String(t)]);
+  return owned.length ? owned : alive; // 소유 없으면 생존 팀으로 대체
+}
+function nextDraftTeam(current) {
+  const teams = draftEligibleTeams();
+  const remaining = teams.filter(t => (specialDraft.chosenCount?.[t] ?? 0) < 4);
+  if (remaining.length === 0) return null;
+  const ci = teams.indexOf(current);
+  for (let k = 1; k <= teams.length; k++) {
+    const t = teams[(ci + k) % teams.length];
+    if ((specialDraft.chosenCount?.[t] ?? 0) < 4) return t;
+  }
+  return null;
+}
+function draftEligibleTeams(){
+  // 온라인: 소유된(활성) 팀만 / 오프라인: 생존 팀 모두
+  return online ? getActiveTeams() : getAliveTeams();
+}
+function activeOwnersCount() {
+  const teams = draftEligibleTeams();
+  const connected = new Set([...conns.keys(), myPeerId].filter(Boolean));
+  const ownersSet = new Set();
+  for (const t of teams) {
+    const oid = owners?.[String(t)];
+    if (oid && connected.has(oid)) ownersSet.add(oid);
+  }
+  // 아직 팀 소유자가 안 정해진 경우에는 “활성 팀 수”를 기준으로
+  return ownersSet.size > 0 ? ownersSet.size : teams.length;
+}
+function connectedPeerCount(){
+  // 현재 P2P로 연결된 모든 피어 + 나 자신
+  const connected = new Set([...conns.keys(), myPeerId].filter(Boolean));
+  return connected.size;
+}
+function checkDraftFinalize() {
+  if (!online) return;
+  if (!(isAnchor && typeof isAnchor === 'function' && isAnchor())) return;
+  if (draftSignals.finalized) return;
+
+  const teams = draftEligibleTeams();
+
+  // 모든 드래프트 대상 팀에 소유자 존재
+  const allOwned = teams.every(t => owners && owners[String(t)]);
+
+  // 각 팀이 4개를 모두 채웠거나 완료 플래그됨
+  const teamsAllPicked4 = teams.every(t =>
+    (specialDraft.chosenCount?.[t] || 0) >= 4 || specialDraft.doneByTeam[t] === true
+  );
+
+  // 모든 접속자 준비 신호 수집
+  const expected = connectedPeerCount();
+  const gotAllReadies = expected > 0 && draftSignals.peersReady.size >= expected;
+
+  // 모두 충족 시에만 확정
+  if (allOwned && teamsAllPicked4 && gotAllReadies) {
+    draftSignals.finalized = true;
+    try { broadcast({ t:'DRAFT_FINALIZE' }); } catch(e) {}
+    try { finalizeSpecialDraft(); } catch(e) {}
+
+    const state = toRoomState();
+    broadcast({ t:'SYNC', state, hash: hashState() });
+  }
+}
+
+let __draftKeyHandlerInstalled = false;
+function attachDraftKeyHandler() {
+  if (__draftKeyHandlerInstalled) return;
+  __draftKeyHandlerInstalled = true;
+
+  document.addEventListener('keydown', draftKeyHandler, true); // capture 단계
+}
+function detachDraftKeyHandler() {
+  if (!__draftKeyHandlerInstalled) return;
+  __draftKeyHandlerInstalled = false;
+
+  document.removeEventListener('keydown', draftKeyHandler, true);
+}
+function pruneOwnersForConnectedPeers() {
+  try {
+    const connected = new Set([...conns.keys(), myPeerId].filter(Boolean));
+    let changed = false;
+    const next = { ...(owners || {}) };
+    for (const k of Object.keys(next)) {
+      const pid = next[k];
+      if (pid && !connected.has(pid)) {
+        next[k] = null;
+        changed = true;
+      }
+    }
+    if (changed) {
+      owners = next;
+      renderTeamSlots?.();
+      if (online && myPeerId === anchorId()) {
+        broadcast({ t: 'OWNERS', owners });
+        broadcast({ t: 'SYNC', state: toRoomState(), hash: hashState() });
+      }
+    }
+  } catch(e) { console.warn('pruneOwnersForConnectedPeers error', e); }
+}
+function draftKeyHandler(e) {
+  if (!specialDraft?.active) return;
+  // Z 또는 Enter로 선택 확정
+  if (e.key === 'z' || e.key === 'Z' || e.key === 'Enter') {
+    e.stopPropagation();
+    e.preventDefault();
+    pickFocusedSpecial();
+  }
+  // 위/아래로 포커스 이동(선택사항이지만 편의 추가)
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.stopPropagation();
+    e.preventDefault();
+    const t = specialDraft.team;
+    const list = players.filter(u => u.team === t && isSpecialUnit(u));
+    const unchosen = list.filter(u => !specialDraft.chosenIds.has(u.id));
+    if (unchosen.length === 0) return;
+    let idx = unchosen.findIndex(u => u.id === specialDraft.focusId);
+    if (idx === -1) idx = 0;
+    idx = (e.key === 'ArrowUp') ? (idx - 1 + unchosen.length) % unchosen.length
+                                : (idx + 1) % unchosen.length;
+    specialDraft.focusId = unchosen[idx].id;
+    renderSpecialDraft();
+  }
+}
+function finalizeSpecialDraft() {
+  const keep = specialDraft.chosenIds;
+  for (let i = players.length - 1; i >= 0; i--) {
+    const u = players[i];
+    if (isSpecialUnit(u) && !keep.has(u.id)) players.splice(i, 1);
+  }
+  for (let i = players.length - 1; i >= 0; i--) {
+  const u = players[i];
+  if (u.name === '블레이즈 & 엠버') {
+    const bx = u.x, by = u.y, t = u.team;
+    players.splice(i,1);
+    players.push(createBlazeUnit(t, bx, by));
+    players.push(createEmberUnit(t, bx, by));
+  }
+}
+  specialDraft.active = false;
+  draftSignals.peersReady.clear();
+draftSignals.finalized = false;
+  specialDraft.focusId = null;
+  detachDraftKeyHandler();
+  syncSnowballsToSnowmen();
+  popup.style.display = 'none';
+  popup.style.transform = '';
+  
+  // 배치 단계 없이 바로 게임 시작
+  status && (status.textContent = '게임을 시작합니다!');
+  
+  // ★ 추가: 드래프트 완료 직후 즉시 동기화
+  if (online) {
+    setTimeout(() => {
+      const state = toRoomState();
+      broadcast({ t: 'SYNC', state, hash: hashState() });
+    }, 100);
+  }
+  status && (status.textContent = '게임을 시작합니다!');
+clearCheerBuffsForTeam(currentTurn);
+applyCheerBuffsForTeam(currentTurn);
+drawBoard();
+}
+function hasGambler(team) {
+  return players.some(p => p.team === team && p.name === '도박사');
+}
+function hasGamblerEvolved(team) {
+  return players.some(p => p.team === team && p.name === '도박꾼');
+}
+// 도박사 또는 도박꾼 둘 중 하나라도 보유?
+function hasGamblerAny(team) {
+  return hasGambler(team) || hasGamblerEvolved(team);
+}
+
+function hasDoctor(team) {
+  return players.some(p => p.team === team && p.name === '의사');
+}
+function getDoctorPos(team) {
+  const d = players.find(p => p.team === team && p.name === '의사');
+  return d ? { x: d.x, y: d.y } : null;
+}
+function getDoctorsInRange(team, x, y, r = 2) {
+  return players.filter(p => p.team === team && p.name === '의사' && (Math.abs(p.x - x) + Math.abs(p.y - y) <= r));
+}
+function cellOccupied(x, y) {
+  return players.some(p => p.x === x && p.y === y);
+}
+function hasAnyStepAvailable(team){
+  // 패시브 발동 중(엠버와 같은 칸)인 블레이즈는 이동력이 0이어도 후보에서 제외하지 않는다
+  const candidates = players.filter(p => p.team === team && ((p.movement ?? 1) > 0 || (p.name === '블레이즈' && p._emberBoosted === true)));
+  for (const u of candidates) {
+    for (const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      const nx = u.x + dx, ny = u.y + dy;
+      // canApplyStep은 상태 의존이므로 임시로 비용/진입 차단만 체크
+      if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+      if (isEnteringEnemyFrog?.(u.x, u.y, nx, ny, u.team)) continue;
+      // 이동력과 남은 에너지로 가능 여부 (패시브 발동 중인 블레이즈는 에너지 없이 이동 가능)
+      const mv = Number(u.movement ?? 1);
+      if (u.name === '블레이즈' && u._emberBoosted === true) return true;
+      if (moveEnergy >= mv) return true;
+    }
+  }
+  return false;
+}
+function snowballAt(x, y) {
+  return snowballs.findIndex(s => s.x === x && s.y === y);
+}
+function giftAt(x, y) {
+  return gifts.findIndex(g => g.x === x && g.y === y);
+}
+
+function randomEmptyCellForGift() {
+  const spots = [];
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    if (!cellOccupied(x, y) && snowballAt(x, y) === -1 && giftAt(x, y) === -1) spots.push({ x, y });
+  }
+  if (spots.length === 0) return null;
+  return spots[Math.floor(Math.random() * spots.length)];
+}
+
+function syncGiftsToSantas() {
+  const count = players.filter(p => p.name === '산타클로스').length * 5;
+  while (gifts.length < count) {
+    const pos = randomEmptyCellForGift();
+    if (!pos) break;
+    gifts.push(pos);
+  }
+  while (gifts.length > count) gifts.pop();
+}
+function respawnGiftAtIndex(i) {
+  const pos = randomEmptyCellForGift();
+  if (!pos) { gifts.splice(i, 1); return; }
+  gifts[i] = pos;
+}
+function randomEmptyCell() {
+  const spots = [];
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    if (!cellOccupied(x,y) && snowballAt(x,y) === -1) spots.push({x,y});
+  }
+  if (spots.length === 0) return null;
+  return spots[Math.floor(Math.random() * spots.length)];
+}
+// 지정한 눈사람의 사거리 내에서 빈 칸을 무작위로 고른다(범위 내에 빈 칸이 없으면 아무 빈 칸이나 사용)
+function randomEmptyCellInSnowmanRange(snowman) {
+  if (!snowman) return randomEmptyCell();
+  const r = Number(snowman.range ?? 1);
+  const spots = [];
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    if (cellOccupied(x,y) || snowballAt(x,y) !== -1) continue;
+    if (Math.abs(x - snowman.x) + Math.abs(y - snowman.y) <= r) spots.push({x,y});
+  }
+  if (spots.length === 0) return randomEmptyCell();
+  return spots[Math.floor(Math.random() * spots.length)];
+}
+function syncSnowballsToSnowmen() {
+  const snowmen = players.filter(p => p.name === '눈사람');
+  const count = snowmen.length * 2;
+  while (snowballs.length < count) {
+    const anchor = snowmen[Math.floor(Math.random() * snowmen.length)];
+    const pos = randomEmptyCellInSnowmanRange(anchor);
+    if (!pos) break;
+    snowballs.push(pos);
+  }
+  while (snowballs.length > count) snowballs.pop();
+}
+function respawnSnowballAtIndex(i, snowman) {
+  const pos = randomEmptyCellInSnowmanRange(snowman);
+  if (!pos) { snowballs.splice(i,1); return; }
+  snowballs[i] = pos;
+}
+function respawnSnowball(i){ respawnSnowballAtIndex(i); }
+function teamHasSnowman(team) {
+  return players.some(p => p.team === team && p.name === '눈사람');
+}
+function buffRandomSnowmanStats(snowman) {
+  if (!snowman) return;
+  snowman.power = (snowman.power ?? 0) + 1;
+  snowman.range = (snowman.range ?? 0) + 1;
+}
+function togglePickSpecial(unitId){
+  if (!specialDraft?.active) return;
+let t;
+if (specialDraft.mode === 'turn' || !online) {
+  t = specialDraft.team;
+} else {
+  t = nextOwnedTeamNeedingPicks();
+}
+if (t == null) return;
+
+if (online && owners?.[String(t)] && owners[String(t)] !== myPeerId) {
+  status && (status.textContent = '해당 팀의 소유자만 선택/해제할 수 있습니다. 상단에서 팀을 점유하세요.');
+  return;
+}
+
+  const isChosen = specialDraft.chosenIds.has(unitId);
+  if (isChosen) {
+    specialDraft.chosenIds.delete(unitId);
+    specialDraft.chosenCount[t] = Math.max(0, (specialDraft.chosenCount[t]||0) - 1);
+  } else {
+    if ((specialDraft.chosenCount[t]||0) >= 4) return;
+    specialDraft.chosenIds.add(unitId);
+    specialDraft.chosenCount[t] = (specialDraft.chosenCount[t]||0) + 1;
+  }
+
+  if (online) {
+    const a = makeAction('SKILL', { kind:'DRAFT_PICK', unitId, team: t, toggle: !isChosen });
+    a.post = hashState();
+    broadcast(a);
+  }
+
+  // 🔥 여기 있던 "simul에서 4개 꽉 차면 자동 DRAFT_DONE" 블럭을 삭제합니다.
+  // if (online && specialDraft.mode === 'simul' && (specialDraft.chosenCount[t] >= 4)) { ... }
+
+  renderSpecialDraft();
+}
+function confirmDraftForTeam(){
+  const t = specialDraft.team;
+  if ((specialDraft.chosenCount?.[t]||0) < 4) return; // 4개 미만이면 무시
+  advanceDraftTeam();  // 다음 팀으로
+}
+function pickFocusedSpecial() {
+  if (!specialDraft?.active) return;
+let t;
+if (specialDraft.mode === 'turn' || !online) {
+  t = specialDraft.team;
+} else {
+  t = nextOwnedTeamNeedingPicks();
+}
+if (t == null) return;
+if (online && owners?.[String(t)] !== myPeerId) return;
+
+  if ((specialDraft.chosenCount?.[t] ?? 0) >= 4) {
+    // 🔥 더 이상 자동으로 다음으로 넘기지 않음
+    return;
+  }
+
+  const list = players.filter(u => u.team === t && isSpecialUnit(u));
+  const unchosen = list.filter(u => !specialDraft.chosenIds.has(u.id));
+  if (unchosen.length === 0) return;
+
+  let focus = unchosen.find(u => u.id === specialDraft.focusId);
+  if (!focus) focus = unchosen[0];
+
+  specialDraft.chosenIds.add(focus.id);
+  specialDraft.chosenCount[t] = (specialDraft.chosenCount[t] || 0) + 1;
+
+  if (online) {
+    const a = makeAction('SKILL', { kind:'DRAFT_PICK', unitId: focus.id, team: t });
+    a.post = hashState();
+    broadcast(a);
+  }
+
+  const rest = list.filter(u => !specialDraft.chosenIds.has(u.id));
+  specialDraft.focusId = rest[0]?.id || null;
+
+  // 🔥 자동 진행 없음
+  renderSpecialDraft();
+}
+function checkSnowballInteractions() {
+  // 각 눈사람의 현재 좌표가 눈덩이와 겹치는지 검사
+  const snowmen = players.filter(p => p.name === '눈사람');
+  for (const sm of snowmen) {
+    const i = snowballs.findIndex(s => s.x === sm.x && s.y === sm.y);
+    if (i !== -1) {
+      buffRandomSnowmanStats(sm);
+      respawnSnowballAtIndex(i, sm);
+    }
+  }
+}
+function checkSnowballPickup(piece) {
+  if (piece?.name !== '눈사람') return;
+  const i = snowballs.findIndex(s => s.x === piece.x && s.y === piece.y);
+  if (i !== -1) {
+    buffRandomSnowmanStats(piece);
+    respawnSnowballAtIndex(i, piece);
+  }
+}
+function checkGiftPickup(piece) {
+  if (piece?.name !== '산타클로스') return;
+  const i = gifts.findIndex(g => g.x === piece.x && g.y === piece.y);
+  if (i !== -1) {
+    respawnGiftAtIndex(i);
+  }
+}
+
+function checkGiftPickupByTeamAt(x, y, team) {
+  const santa = players.find(p => p.team === team && p.name === '산타클로스' && p.x === x && p.y === y);
+  if (santa) {
+    const i = gifts.findIndex(g => g.x === x && g.y === y);
+    if (i !== -1) respawnGiftAtIndex(i);
+  }
+}
+function checkSnowballPickupByTeamAt(x, y, team) {
+  // 팀 단위 획득 로직 제거: 눈사람이 직접 밟아야만 버프
+  const sm = players.find(p => p.team === team && p.name === '눈사람' && p.x === x && p.y === y);
+  if (sm) {
+    const i = snowballs.findIndex(s => s.x === x && s.y === y);
+    if (i !== -1) {
+      buffRandomSnowmanStats(sm);
+      respawnSnowballAtIndex(i, sm);
+    }
+  }
+}
+function pickRandomSpecialUnit() {
+  const list = players.filter(u => Array.isArray(u.tags) && u.tags.includes('특수 병사') && u.name !== '폼트랜서' && u.name !== '성');
+  if (list.length === 0) return null;
+  return list[Math.floor(Math.random() * list.length)];
+}
+function applyFormForTeam(team) {
+  const forms = players.filter(p => p.team === team && (p.name === '폼트랜서' || p.type === 'formtrancer' || p._form));
+  for (const f of forms) {
+    const target = pickRandomSpecialUnit();
+    if (!target) continue;
+
+    // 원본 스냅샷: 이미 변신 중(_form 있음)이면 덮어쓰지 않음
+    if (!f._form) {
+      f._form = {
+        name: '폼트랜서',
+        type: 'formtrancer',
+        power: f.power,
+        range: f.range,
+        movement: f.movement,
+        tags: Array.isArray(f.tags) ? [...f.tags] : []
+      };
+    }
+
+    // 타겟으로 변신
+    f.name = target.name;
+    f.type = target.type;
+    f.power = target.power;
+    f.range = target.range;
+    f.movement = target.movement;
+    f.tags = Array.isArray(target.tags) ? [...target.tags] : [];
+  }
+}
+function revertFormForTeam(team) {
+  const forms = players.filter(p => p.team === team && (p.name === '폼트랜서' || p.type === 'formtrancer' || p._form));
+  for (const f of forms) {
+    if (!f._form) continue;               // 이미 원본 상태
+    f.name = '폼트랜서';
+    f.type = 'formtrancer';
+    f.power = f._form.power;
+    f.range = f._form.range;
+    f.movement = f._form.movement;
+    f.tags = Array.isArray(f._form.tags) ? [...f._form.tags] : [];
+    f._form = null;                       // 변신 종료
+  }
+}
+function getClownSuppressionTeams(unitsOnCell){
+  const teamsHere = new Set(unitsOnCell.map(u => u.team));
+  const suppressed = new Set();
+
+  // ① 기본: 전투 칸에 광대가 있으면 상대 지원 0
+  for (const u of unitsOnCell) {
+    if (u.name === '광대' && !u._evolved) {
+      for (const t of teamsHere) if (t !== u.team) suppressed.add(t);
+    }
+  }
+
+  // ② 진화 광대: 그 팀이 전투에 ‘참여’하기만 하면 상대 지원 0
+  //    (진화 광대 본인은 어디에 있어도 상관없음)
+  const teamsWithEvolvedClown = new Set(
+    players.filter(p => p.name === '광대' && p._evolved).map(p => p.team)
+  );
+  for (const t of teamsHere) {
+    if (teamsWithEvolvedClown.has(t)) {
+      for (const opp of teamsHere) if (opp !== t) suppressed.add(opp);
+    }
+  }
+  return suppressed;
+}
+function beginTricksterMenu(piece) {
+  popup.innerHTML = '<p class="font-bold mb-2">턴 수 조작</p>';
+  [1,2,3,4,5].forEach(n => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
+    btn.textContent = `+${n}`;
+    btn.onclick = (e) => {
+  e.stopPropagation();
+  currentRound += n;
+  piece._usedThisTurn = true;        // ← 스키퍼 이번 차례 사용 표시
+  if (turnDisplay) turnDisplay.textContent = `턴: ${currentRound}`;
+  status && (status.textContent = `스키퍼가 턴 수를 +${n} 했습니다`);
+  try { popup.dataset.lock = '0'; } catch(e){}
+  popup.style.display = 'none';
+  drawBoard();
+};
+
+    popup.appendChild(btn);
+  });
+  popup.style.left = '50%';
+  popup.style.top = '50%';
+  popup.style.transform = 'translate(-50%,-50%)';
+  popup.style.display = 'block';
+  try { popup.dataset.lock = '1'; } catch(e){}
+}
+
+function startModeSelection() {
+    // 온라인: 호스트만 모드 선택 가능, 게스트는 대기 화면
+  if (online && myPeerId && __hostId && myPeerId !== __hostId) {
+    modeSelect.active = true;
+    popup.dataset.lock = '1';
+    popup.innerHTML = '<p class="font-bold mb-2">호스트가 드래프트 모드를 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
+    popup.style.left = '50%';
+    popup.style.top  = '50%';
+    popup.style.transform = 'translate(-50%, -50%)';
+    popup.style.display = 'block';
+    return;
+  }
+
+  modeSelect.active = true;
+  popup.dataset.lock = '1';  // 추가
+
+  popup.innerHTML = '<p class="font-bold mb-2">드래프트 모드를 선택하세요</p>';
+
+  const normalBtn = document.createElement('button');
+  normalBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-2';
+  normalBtn.textContent = '일반 드래프트 모드';
+  normalBtn.onclick = () => {
+  gameMode = 'normal';
+  popup.style.display = 'none';
+  modeSelect.active = false;
+  // ★ 다음 단계: 승리 조건(점령전 / 왕좌 쟁탈전) 선택
+  startWinModeSelection(() => {
+    askPlayerCountAndCullTeams();
+    initNormalDraft();
+    draftSignals.peersReady.clear(); draftSignals.finalized = false;
+    // ★ 추가: 드래프트 활성 직후 전체 동기화(게스트에게 선택창 표시)
+    if (online) {
+      const state = toRoomState();
+      broadcast({ t: 'SYNC', state, hash: hashState() });
+    }
+  });
+};
+  const randomBtn = document.createElement('button');
+  randomBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
+  randomBtn.textContent = '랜덤 드래프트 모드 (4인 고정)';
+  randomBtn.onclick = () => {
+  gameMode = 'random';
+  modeSelect.active = false;
+  // ★ 다음 단계: 승리 조건(점령전 / 왕좌 쟁탈전) 선택
+  startWinModeSelection(() => {
+    resetTurnToFirstAlive();
+    beginRandomDraft();
+
+    // ★ 추가: 랜덤 드래프트 활성 직후 전체 동기화(게스트에게 선택창 표시)
+    if (online) {
+      const state = toRoomState();
+      broadcast({ t: 'SYNC', state, hash: hashState() });
+    }
+  });
+};
+  popup.appendChild(normalBtn);
+  popup.appendChild(randomBtn);
+  popup.style.left = '50%';
+  popup.style.top  = '50%';
+  popup.style.transform = 'translate(-50%, -50%)';
+  popup.style.display = 'block';
+}
+
+// ===== 승리 조건(게임 목표) 선택: 드래프트 모드 다음 단계 =====
+// onChosen: 승리 조건이 정해진 뒤 실제로 드래프트를 시작시키는 콜백
+function startWinModeSelection(onChosen) {
+  // 온라인: 호스트만 선택 가능, 게스트는 대기 화면
+  if (online && myPeerId && __hostId && myPeerId !== __hostId) {
+    winModeSelect.active = true;
+    popup.dataset.lock = '1';
+    popup.innerHTML = '<p class="font-bold mb-2">호스트가 승리 조건을 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
+    popup.style.left = '50%';
+    popup.style.top  = '50%';
+    popup.style.transform = 'translate(-50%, -50%)';
+    popup.style.display = 'block';
+    return;
+  }
+
+  winModeSelect.active = true;
+  popup.dataset.lock = '1';
+
+  popup.innerHTML = '<p class="font-bold mb-2">승리 조건을 선택하세요</p>';
+
+  const territoryBtn = document.createElement('button');
+  territoryBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-2';
+  territoryBtn.textContent = '점령전 (가운데 칸을 점령해 30점을 먼저 모으면 승리)';
+  territoryBtn.onclick = () => {
+    winMode = 'territory';
+    winModeSelect.active = false;
+    popup.style.display = 'none';
+    removeAllKings();
+    updateScoreBoard();
+    onChosen();
+  };
+
+  const kingBtn = document.createElement('button');
+  kingBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
+  kingBtn.textContent = '왕좌 쟁탈전 (상대 팀의 왕을 제거하면 그 팀은 전멸)';
+  kingBtn.onclick = () => {
+    winMode = 'king';
+    winModeSelect.active = false;
+    popup.style.display = 'none';
+    ensureKingsForAllTeams();
+    updateScoreBoard();
+    onChosen();
+  };
+
+  popup.appendChild(territoryBtn);
+  popup.appendChild(kingBtn);
+  popup.style.left = '50%';
+  popup.style.top  = '50%';
+  popup.style.transform = 'translate(-50%, -50%)';
+  popup.style.display = 'block';
+
+  // 온라인: 게스트들에게 "승리 조건 선택 중" 대기 화면을 띄우도록 알림
+  if (online) {
+    try { broadcast({ t: 'WINMODE_PROMPT' }); } catch(e){}
+  }
+}
+
+// 왕좌 쟁탈전: 각 팀(아직 살아있는=일반 병사가 남아있는 팀)에 왕을 1기씩 배치
+function ensureKingsForAllTeams() {
+  for (let t = 0; t < 4; t++) {
+    const hasKing = players.some(p => p.team === t && p.name === '왕');
+    if (hasKing) continue;
+    const seed = players.find(p => p.team === t && p.name === '일반 병사');
+    if (!seed) continue; // 이미 제외된 팀
+    players.push({
+      id: `p${t + 1}-king`, name: '왕', x: seed.x, y: seed.y,
+      color: seed.color, power: 1, team: t, movement: 1, range: 0
+    });
+  }
+}
+
+// 점령전: 왕좌 쟁탈전에서 넘어온 잔여 왕 유닛 정리
+function removeAllKings() {
+  for (let i = players.length - 1; i >= 0; i--) {
+    if (players[i].name === '왕') players.splice(i, 1);
+  }
+}
+
+// 왕좌 쟁탈전 승리 판정: 살아있는(왕 또는 일반 병사가 남아있는) 팀이 하나만 남으면 종료
+function checkKingWin() {
+  if (gameEnded) return;
+  const alive = getAliveTeams();
+  if (alive.length !== 1) return;
+  gameEnded = true;
+  const winTeam = alive[0];
+  const msg = `🏆 플레이어 ${winTeam + 1} 승리! (왕좌 쟁탈전 - 마지막까지 생존)`;
+  status && (status.textContent = msg);
+  if (defeatMsg) {
+    defeatMsg.textContent = msg;
+    defeatMsg.style.display = 'block';
+  }
+}
+const ALL_SPECIAL_NAMES = [
+  '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼',
+  '의사','좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인',
+  '응원단장','트럭 운전사','블레이즈 & 엠버','비숍','산타클로스','샤워기'
+];
+
+// 팀 시작 좌표(왕/일반 병사 기준)
+function getTeamStartPos(team) {
+  const seed = players.find(p => p.team === team && (p.name === '왕' || p.name === '일반 병사'));
+  return seed ? { x: seed.x, y: seed.y } : { x: 0, y: 0 };
+}
+
+// 팀 색
+function teamColor(team){ return getTeamColor?.(team) || 'bg-gray-500'; }
+// 이름으로 특수 병사 1기 생성
+function createSpecialUnitByName(name, team) {
+  const pos = getTeamStartPos(team);
+  const base = {
+    id: `${name}-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    name, team, x: pos.x, y: pos.y, color: teamColor(team), tags: ['특수 병사']
+  };
+  switch (name) {
+    case '저격수':   return { ...base, power: 2, range: 2, movement: 1, type: 'sniper' };
+    case '기자':     return { ...base, power: 1, range: 0, movement: 1, type: 'journalist' };
+    case '고목':     return { ...base, power: 1, range: 1, movement: 1, type: 'gomok', _movedThisTurn: false, tags: ['특수 병사', '친수성'] };
+    case '사신':     return { ...base, power: 4, range: 4, movement: 4, type: 'reaper' };
+    case '사육사':   return { ...base, power: 1, range: 0, movement: 1, type: 'zookeeper' };
+    case '건축가':   return { ...base, power: 1, range: 0, movement: 1, type: 'architect' };
+    case '닌자':     return { ...base, power: 0.5, range: 5, movement: 0.25, type: 'ninja' };
+    case '범고래':   return { ...base, power: 1, range: 1, movement: 1, type: 'orca', tags: ['특수 병사', '친수성'] };
+    case '수레꾼':   return { ...base, power: 0.5, range: 0, movement: 1, type: 'cart' };
+    case '의사':     return { ...base, power: 0, range: 2, movement: 1, type: 'doctor' };
+    case '좀비':     return { ...base, power: 1, range: 0, movement: 0.5, type: 'zombie' };
+    case '도박사':   return { ...base, power: 1, range: 0, movement: 0.5, type: 'gambler' };
+    case '눈사람':   return { ...base, power: 0, range: 1, movement: 1, type: 'snowman' };
+    case '산타클로스': return { ...base, power: 1, range: 0, movement: 1, type: 'santa' };
+    case '폼트랜서': return { ...base, power: 1, range: 1, movement: 1, type: 'formtrancer', _form: null };
+    case '광대':     return { ...base, power: 1, range: 0, movement: 1, type: 'clown' };
+    case '스키퍼':   return { ...base, power: 1, range: 0, movement: 1, type: 'trickster' };
+    case '여왕개미': return { ...base, power: 1, range: 0, movement: 1, type: 'queenAnt', _ants: [] };
+    case '상인':     return { ...base, power: 0.5, range: 0, movement: 1, type: 'merchant', _usedThisTurn: false };
+    case '개미':     return { id:`ant-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, name:'개미', team,
+                              x: pos.x, y: pos.y, color: teamColor(team), power: 1, range: 0, movement: 1, type: 'ant' };
+    case '응원단장': return { ...base, power: 1, range: 5, movement: 1, type: 'cheer' };
+    case '트럭 운전사':
+      return { ...base, power: 1, range: 0, movement: 0.5, type: 'trucker', _truckUsedThisTurn: false };
+    case '블레이즈 & 엠버':
+      return { ...base, power: 0, range: 0, movement: 0, type: 'blaze_ember_seed' };
+    case '블레이즈': {
+      const p = getTeamStartPos(team);
+      return createBlazeUnit(team, p.x, p.y);
+    }
+    case '엠버': {
+      const p = getTeamStartPos(team);
+      return createEmberUnit(team, p.x, p.y);
+    }
+      case '비숍':     return { ...base, power: 0.5, range: 0, movement: 1, type: 'bishop' };
+      case '샤워기':   return { ...base, power: 1, range: 1, movement: 1, type: 'shower', _usedThisTurn: false, tags: ['특수 병사', '친수성'] };
+    default:
+      return null;
+  }
+}
+
+function createBlazeUnit(team, x, y) {
+  return {
+    id: `blaze-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    name: '블레이즈', team, x, y, color: teamColor(team),
+    power: 1, movement: 1, range: 0, type: 'blaze', tags: ['특수 병사']
+  };
+}
+function createEmberUnit(team, x, y) {
+  return {
+    id: `ember-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    name: '엠버', team, x, y, color: teamColor(team),
+    power: 1, movement: 0.5, range: 0, type: 'ember', tags: ['특수 병사']
+  };
+}
+function manhattanDist(ax, ay, bx, by){ return Math.abs(ax-bx)+Math.abs(ay-by); }
+function collectUnitsInRadius(cx, cy, r, predicate){
+  const out=[]; for(const u of players){ if (!predicate||predicate(u)) {
+    if (u.x>=0 && u.y>=0 && manhattanDist(u.x,u.y,cx,cy)<=r) out.push(u);
+  }} return out;
+}
+function nearestEmptyCell(fromX, fromY){
+  // 반경 1 → 2 → 3 순서로만 탐색(너무 멀리 퍼지지 않게)
+  for (let r = 1; r <= 3; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) > r) continue;
+        const x = fromX + dx, y = fromY + dy;
+        if (x < 0 || y < 0 || x >= size || y >= size) continue;
+        if (!cellOccupied(x,y) && snowballAt(x,y) === -1) {
+          return { x, y };
+        }
+      }
+    }
+  }
+  return null;
+}
+function banishUnits(units, durationRounds, exceptId){
+  const until = currentRound + durationRounds;
+  for (const u of units){
+    if (u.id===exceptId) continue;
+    if (u.name==='왕' || isCastle?.(u)) continue;
+    if (u._banishedUntilRound && u._banishedUntilRound>=until) continue;
+    u._banishedUntilRound = until;
+    u._banishedReturn = { x: u.x, y: u.y };
+    u.x = -1; u.y = -1; // 보드에서 제거
+  }
+}
+function processBanishedReturns(turnTeam){
+  for (const u of players){
+    if (u.team!==turnTeam) continue;
+    if (!u._banishedUntilRound) continue;
+    if (currentRound < u._banishedUntilRound) continue;
+    const backTo = u._banishedReturn || getTeamStartPos(u.team);
+let dest = backTo;
+
+// 1) 원래 칸
+if (!cellOccupied(backTo.x, backTo.y) && snowballAt(backTo.x, backTo.y) === -1) {
+  dest = backTo;
+} else {
+  // 2) 같은 팀 출발지점 시도
+  const kp = getTeamStartPos(u.team);
+  if (kp && !cellOccupied(kp.x, kp.y) && snowballAt(kp.x, kp.y) === -1) {
+    dest = kp;
+  } else {
+    // 3) 근거리(반경1~3)만 검색
+    const near = nearestEmptyCell(backTo.x, backTo.y);
+    dest = near || backTo;
+  }
+}
+
+u.x = dest.x; u.y = dest.y;
+    delete u._banishedUntilRound;
+    delete u._banishedReturn;
+  }
+}
+function showCenterMessage(text, ms = 2000) {
+  defeatMsg.textContent = text;
+  defeatMsg.style.display = 'block';
+  setTimeout(() => { defeatMsg.style.display = 'none'; }, ms);
+}
+
+function flashCell(x, y, ms = 1000, color = 'rgba(244, 114, 182, 0.65)') { // 기본: 분홍색, 1초
+  const idx = y * size + x;
+  const cell = board.children[idx];
+  if (!cell) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'absolute inset-0';
+  overlay.style.background = color;
+  overlay.style.pointerEvents = 'none';
+  cell.appendChild(overlay);
+  setTimeout(() => overlay.remove(), ms);
+}
+function resetMerchantUsageForTeam(team){
+  players.forEach(u => { if (u.name==='상인' && u.team===team) u._usedThisTurn = false; });
+}
+// ✅ 해당 팀의 기존 응원 버프 제거
+function clearCheerBuffsForTeam(team){
+  for (const u of players) {
+    if (u._cheerBuffTeam === team && u._cheerBuffVal > 0) {
+      u.power = +( (u.power ?? 0) - u._cheerBuffVal ).toFixed(3);
+      delete u._cheerBuffTeam;
+      delete u._cheerBuffVal;
+    }
+  }
+}
+// ✅ 해당 팀 턴 시작 시 새 버프 적용 (사거리 5, 대상: 아군 '일반 병사', 중복 가능)
+function applyCheerBuffsForTeam(team){
+  const cheers = players.filter(p => p.team === team && p.name === '응원단장');
+  if (cheers.length === 0) return;
+  const soldiers = players.filter(p => p.team === team && p.name === '일반 병사');
+  for (const s of soldiers) {
+    let cnt = 0;
+    for (const c of cheers) {
+      const d = Math.abs(c.x - s.x) + Math.abs(c.y - s.y);
+      if (d <= (c.range ?? 0)) cnt++;
+    }
+    if (cnt > 0) {
+      s.power = +( (s.power ?? 0) + cnt ).toFixed(3);
+      s._cheerBuffTeam = team;
+      s._cheerBuffVal  = cnt;   // 같은 팀 응원단장 여러 명이면 합산
+    }
+  }
+}
+function beginRandomDraft(){
+  randomDraft.active = true;
+  randomDraft.round  = 0;
+  randomDraft.order  = rotatedOrder(0);
+  randomDraft.idx    = 0;
+  randomDraft.taken  = new Set();
+  randomDraft.pool   = makeRandomPool();
+
+  // ★ 추가: 랜덤 드래프트 시작 상태를 즉시 배포
+  if (online) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+  }
+  renderRandomDraft();
+}
+function renderRandomDraft(){
+  const t = randomDraft.order[randomDraft.idx]; // 현재 선택할 팀
+  popup.innerHTML = `<p class="font-bold mb-2">랜덤 드래프트 - 플레이어 ${t+1} 선택</p>`;
+  randomDraft.pool.forEach(name=>{
+    const btn = document.createElement('button');
+    btn.type='button';
+    btn.className='block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
+    btn.textContent = name;
+    btn.onclick = () => pickRandomDraft(name);
+    popup.appendChild(btn);
+  });
+  // ▼ 중앙 배치: "보드" 기준
+  popup.style.display = 'block';
+  // 긴 목록 대비(필요 시 조절)
+  popup.style.maxHeight = '70vh';
+  popup.style.overflowY = 'auto';
+  // 이전 transform 제거(윈도 중앙 기준이므로 사용 금지)
+  popup.style.transform = '';
+  // 팝업 실제 크기 측정 후, 보드 중앙 좌표 계산
+  const rect = popup.getBoundingClientRect();
+  const boardRect = board.getBoundingClientRect();
+  const centerX = boardRect.left + (boardRect.width  - rect.width ) / 2;
+  const centerY = boardRect.top  + (boardRect.height - rect.height) / 2;
+  popup.style.left = `${Math.max(8, centerX)}px`;  // padding 8px
+  popup.style.top  = `${Math.max(8, centerY)}px`;
+}
+function pickRandomDraft(name){
+  const t = randomDraft.order[randomDraft.idx];
+  // 말 생성 (블레이즈 & 엠버는 일반 드래프트처럼 블레이즈/엠버 두 유닛으로 나뉘어 등장)
+  if (name === '블레이즈 & 엠버') {
+    const p = getTeamStartPos(t);
+    players.push(createBlazeUnit(t, p.x, p.y));
+    players.push(createEmberUnit(t, p.x, p.y));
+  } else {
+    const unit = createSpecialUnitByName(name, t);
+    if (unit) players.push(unit);
+  }
+  // 현재 라운드 풀/전역 taken 갱신
+  randomDraft.pool = randomDraft.pool.filter(n => n !== name);
+  randomDraft.taken.add(name);                 // ⬅️ 이후 라운드에서 제외
+  // 다음 플레이어
+  randomDraft.idx++;
+  // 라운드 종료?
+  if (randomDraft.idx >= 4) {
+    // 다음 라운드 존재(총 4라운드)
+    if (randomDraft.round < 3) {
+      randomDraft.round += 1;
+      randomDraft.order = rotatedOrder(randomDraft.round); // P2→P3→P4→P1...
+      randomDraft.idx   = 0;
+      randomDraft.pool  = makeRandomPool();
+      // 남은 특수 병사가 0이면 조기 종료
+      if (randomDraft.pool.length === 0) {
+        randomDraft.active = false;
+        popup.style.display = 'none';
+        drawBoard();
+        return;
+      }
+      renderRandomDraft();
+      return;
+    }
+    // 마지막 라운드 종료
+    randomDraft.active = false;
+    popup.style.display = 'none';
+    status && (status.textContent = '게임을 시작합니다!');
+    drawBoard();
+    return;
+  }
+  // 라운드 진행 중
+  renderRandomDraft();
+}
+// 팀별 1회 제한
+const evolutionUsed = [false, false, false, false];
+// 이름 표시(진화 표식)
+function displayName(u){
+  return u._evolved ? `${u.name}★` : u.name;
+}
+function initNormalDraft(){
+  // 기존과 동일한 초기 추가 호출들
+  addSnipers();
+  addReapers();
+  addOrcas();
+  addJournalists();
+  addNinjas();
+  addCartPushers();
+  addGomoks();
+  addArchitects();
+  addZookeepers();
+  addGamblers();
+  addZombies();
+  addDoctors();
+  addSnowmen();
+  addFormTransers();
+  addClowns();     
+  addTricksters();
+  addQueenAnts();
+  addMerchants();
+  addCheerLeaders();
+  addTruckDrivers();
+addBlazeEmberSeeds();
+addBishops();
+addShowers();
+  markSpecialTags();
+  syncSnowballsToSnowmen();
+  startSpecialDraft();
+  drawBoard();
+}
+function addTruckDrivers(){
+  const startByTeam = new Map();
+  for (const p of players){
+    if ((p.name==='왕'||p.name==='일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, {x:p.x,y:p.y});
+    }
+  }
+  for (const [team,pos] of startByTeam){
+    if (players.some(pp=>pp.team===team && pp.name==='트럭 운전사')) continue;
+    players.push(createSpecialUnitByName('트럭 운전사', team));
+  }
+}
+function addBlazeEmberSeeds(){
+  const startByTeam = new Map();
+  for (const p of players){
+    if ((p.name==='왕'||p.name==='일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, {x:p.x,y:p.y});
+    }
+  }
+  for (const [team] of startByTeam){
+    if (players.some(pp=>pp.team===team && pp.name==='블레이즈 & 엠버')) continue;
+    players.push(createSpecialUnitByName('블레이즈 & 엠버', team));
+  }
+}
+function rotatedOrder(start) { return [0,1,2,3].map((_,i)=> (start + i) % 4); }
+function makeRandomPool() {
+  const remain = ALL_SPECIAL_NAMES.filter(n => n !== '산타클로스' && !randomDraft.taken.has(n));
+  // 남은 개수가 4 미만인 경우: 가능한 만큼만 제시(이 경우 자동으로 드래프트가 조기 종료될 수 있음)
+  const need = Math.min(4, remain.length);
+  for (let i = remain.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [remain[i], remain[j]] = [remain[j], remain[i]];
+  }
+  return remain.slice(0, need);
+}
+function applyRoll(result){
+  pushSnapshot('roll');
+  if (hasReaper?.(currentTurn)) {
+    result = 4;
+  }
+  if (currentRound % 2 === 0 && hasGamblerAny?.(currentTurn)) {
+    const evolved = hasGamblerEvolved?.(currentTurn);
+    const p12 = evolved ? 0.75 : 0.5;
+    result = (Math.random() < p12) ? 12 : 1;
+  }
+
+  // ★ 중요: 위 조작을 전부 반영한 "최종 결과"를 저장해야 스키퍼 조건(lastDiceRoll >= 6)이 정상 동작함
+  lastDiceRoll = result;
+
+  // ===== 이동 에너지 계산 =====
+  let energy = result;
+
+  // 범고래: 이동 에너지 조작(+1)
+  if (hasOrca?.(currentTurn)) energy += 1;
+
+  energy = Math.max(0, Number(energy) || 0);
+  moveEnergy = energy;
+  diceRolledThisTurn = true;
+  diceResult.textContent = `🎲 주사위 결과: ${result}`;
+  moveEnergyDisplay.textContent = `남은 이동 에너지: ${moveEnergy}`;
+  if (!selectedPlayerId) status && (status.textContent = '이동할 말을 선택하고 방향키로 이동하세요');
+  if (moveEnergy <= 0) {
+    status && (status.textContent = '이동 가능한 말이 없어 차례를 넘깁니다');
+    selectedPlayerId = null;
+    endTurn();
+    return;
+  }
+  drawBoard();
+  drawBoard?.();
+  if (online) { const state=toRoomState(); broadcast({ t:'SYNC', state, hash: hashState() }); }
+}
+function canApplyStep(piece, dx, dy){
+  const mv = Number(piece.movement ?? 1);
+const blazePassiveActive = (piece.name === '블레이즈' && piece._emberBoosted === true);
+
+// 엠버와 같은 칸(패시브 발동 중)인 블레이즈는 이동력이 0이어도 이동 가능
+if (!blazePassiveActive && !(mv > 0)) return false;
+
+const nx = piece.x + dx, ny = piece.y + dy;
+if (nx < 0 || nx >= size || ny < 0 || ny >= size) return false;
+if (isEnteringEnemyFrog?.(piece.x, piece.y, nx, ny, piece.team)) return false;
+if (isWaterPuddle?.(nx, ny) && !canStandOnWaterPuddle?.(piece)) return false;
+
+// 일반 말은 에너지 필요, 패시브 발동 중인 블레이즈는 에너지 없이도 허용
+const cost = mv;
+if (!blazePassiveActive && moveEnergy < cost) return false;
+
+return true;
+}
+function applyStep(piece, dx, dy){
+  pushSnapshot('move');
+  const nx = piece.x + dx, ny = piece.y + dy;
+
+  if (piece.name === '수레꾼' && cartLink?.mateId && cartLink.pusherId === piece.id) {
+    const mate = players.find(p => p.id === cartLink.mateId);
+    if (mate && mate.team === piece.team && mate.x === piece.x && mate.y === piece.y) {
+      piece.x = nx; piece.y = ny; mate.x = nx; mate.y = ny;
+      checkSnowballPickupByTeamAt(nx, ny, piece.team);
+      checkSnowballPickupByTeamAt(nx, ny, mate.team);
+    } else {
+      cancelCartLink?.(); piece.x = nx; piece.y = ny;
+      checkSnowballPickupByTeamAt(nx, ny, piece.team);
+    }
+  } else {
+  piece.x = nx; piece.y = ny;
+  checkSnowballPickupByTeamAt(nx, ny, piece.team);
+}
+
+// 엠버-블레이즈 연결: 엠버가 이동하면 연결된 블레이즈가 같은 칸으로 따라온다
+if (piece.name === '엠버' && piece._linkedBlazeId) {
+  const linkedBlaze = players.find(p => p.id === piece._linkedBlazeId);
+  if (linkedBlaze && linkedBlaze.x >= 0 && linkedBlaze.y >= 0) {
+    linkedBlaze.x = piece.x; linkedBlaze.y = piece.y;
+    checkSnowballPickupByTeamAt(linkedBlaze.x, linkedBlaze.y, linkedBlaze.team);
+  } else {
+    piece._linkedBlazeId = null;
+  }
+}
+
+if (piece.name === '고목') {
+  piece._movedThisTurn = true;
+}
+if (piece.name === '트럭 운전사') {
+  if (piece._lastMoveDx === dx && piece._lastMoveDy === dy) {
+    piece._dirStreak = (piece._dirStreak || 1) + 1;
+  } else {
+    piece._dirStreak = 1;
+  }
+  piece._lastMoveDx = dx;
+  piece._lastMoveDy = dy;
+}
+const mv = Number(piece.movement ?? 1);
+const blazePassiveActive = (piece.name === '블레이즈' && piece._emberBoosted === true);
+
+// 주사위를 굴린 턴에만 에너지 소모를 적용.
+// 엠버와 같은 칸(패시브 발동 중)인 블레이즈만 에너지 소모 없이 이동한다.
+const consuming = diceRolledThisTurn && !blazePassiveActive;
+const cost = mv > 0 ? mv : 1;
+
+if (consuming) {
+  moveEnergy = Math.max(0, +(moveEnergy - cost).toFixed(3));
+}
+moveEnergyDisplay.textContent = `남은 이동 에너지: ${moveEnergy}`;
+
+// 블레이즈/엠버 페어링 상태(이동력)를 먼저 최신화해야
+// 아래 "더 이동 가능한지" 판정이 방금 떨어진 블레이즈를 정확히 인식한다.
+updateBlazeEmberAura();
+drawBoard();
+
+// 주사위를 굴린 턴에만 “더 이동 불가 → 자동 턴 종료” 검사
+// (에너지가 0이 되어도 블레이즈처럼 에너지 없이 움직일 수 있는 말이 남아있다면 턴을 끝내지 않는다)
+if (diceRolledThisTurn) {
+  const canMore = hasAnyStepAvailable(currentTurn);
+  if (!canMore) {
+    selectedPlayerId = null;
+    endTurn();
+    return;
+  }
+}
+drawBoard?.();
+  if (online) { const state=toRoomState(); broadcast({ t:'SYNC', state, hash: hashState() }); }
+}
+function handleRemoteMove(payload){
+  const { pieceId, dx, dy, turn, round, pre } = payload || {};
+  if (turn !== currentTurn || round !== currentRound) return;
+
+  if (pre && pre !== hashState()) { 
+    broadcast({ t:'ASK_SYNC', from: myPeerId });
+    return;
+  }
+
+  const piece = players.find(p => p.id === pieceId);
+  if (!piece) return;
+  if (piece.team !== currentTurn) return;
+
+  if (!canApplyStep(piece, dx, dy)) return;
+  applyStep(piece, dx, dy);
+  
+  // ★ 추가: 이동 완료 후 상태 동기화
+  if (online && myPeerId === anchorId()) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+  }
+}
+function onNetMsg(msg){
+  if (!msg || typeof msg !== 'object') return;
+  
+  try {
+    switch (msg.t) {
+      case 'HELLO': {
+        if (msg.from) {
+          if (msg.nick) nickMap.set(msg.from, msg.nick);
+          
+          if (Array.isArray(msg.peers)) {
+            for (const peerId of msg.peers) {
+              if (conns.has(peerId) || peerId === myPeerId) continue;
+              const conn = peer.connect(peerId, { reliable: true });
+              setupConn(conn);
+            }
+          }
+          
+          const myConn = conns.get(msg.from);
+          if (myConn && myConn.open) {
+            myConn.send({ 
+              t: 'PEER_LIST', 
+              from: myPeerId, 
+              peers: Array.from(conns.keys()).filter(p => p !== msg.from) 
+            });
+          }
+
+        }
+        pruneOwnersForConnectedPeers();
+        break;
+      }
+      
+      case 'PEER_LIST': {
+        if (Array.isArray(msg.peers)) {
+          for (const peerId of msg.peers) {
+            if (conns.has(peerId) || peerId === myPeerId) continue;
+            const conn = peer.connect(peerId, { reliable: true });
+            setupConn(conn);
+          }
+        }
+        break;
+      }
+      
+      case 'ASK_SYNC': {
+        if (myPeerId === anchorId()) {
+          broadcast({ t:'SYNC', state: toRoomState(), hash: hashState() });
+        }
+        break;
+      }
+      
+      case 'SYNC': {
+        try { 
+          applyRoomState(msg.state); 
+        } catch(e){ 
+          console.warn('SYNC apply failed', e); 
+        }
+        break;
+      }
+      case 'OWNERS': {
+  owners = msg.owners || owners || {};
+  // 단일팀 소유 규칙 유지
+  enforceSingleTeamOwnership();
+  renderTeamSlots();
+  if (specialDraft?.active) {
+    try { renderSpecialDraft(); } catch(e){}
+  }
+  // 앵커에서 정제된 owners 재배포(레이스 방지)
+  if (online && myPeerId === anchorId()) {
+    try { broadcast({ t:'OWNERS', owners }); } catch(e){}
+  }
+  updateDraftWaitingStatus();
+
+  break;
+}
+
+      case 'ACTION': {
+        if (msg.turn !== currentTurn || msg.round !== currentRound) {
+          broadcast({ t:'ASK_SYNC', from: myPeerId });
+          return;
+        }
+        if (owners?.[String(currentTurn)] && owners[String(currentTurn)] !== msg.from) return;
+        
+        if (msg.type === 'ROLL') {
+          const r = msg.payload?.result ?? 1;
+          applyRoll(r);
+        } else if (msg.type === 'MOVE') {
+          handleRemoteMove?.(msg.payload);
+        } else if (msg.type === 'SKILL') {
+          handleRemoteSkill?.({ ...msg.payload, from: msg.from });
+        } else if (msg.type === 'ENDTURN') {
+          endTurn();
+        }
+        break;
+      }
+      
+      case 'HOST': {
+        __hostId = msg.hostId || __hostId;
+        updateStartBtnLock();
+        break;
+      }
+            case 'START': {
+        try { popup.dataset.lock = '0'; } catch(e){}
+        // 호스트만 모드 선택 UI를 띄움. 게스트는 대기 안내만.
+        if (myPeerId && __hostId && myPeerId === __hostId) {
+          try { startModeSelection(); } catch(e){}
+        } else {
+          modeSelect.active = true;
+          popup.dataset.lock = '1';
+          popup.innerHTML = '<p class="font-bold mb-2">호스트가 드래프트 모드를 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
+          popup.style.left = '50%';
+          popup.style.top  = '50%';
+          popup.style.transform = 'translate(-50%, -50%)';
+          popup.style.display = 'block';
+        }
+        break;
+      }
+      case 'WINMODE_PROMPT': {
+        // 호스트가 승리 조건(점령전/왕좌 쟁탈전)을 선택 중 — 게스트에게만 대기 화면 표시
+        if (!(myPeerId && __hostId && myPeerId === __hostId)) {
+          winModeSelect.active = true;
+          popup.dataset.lock = '1';
+          popup.innerHTML = '<p class="font-bold mb-2">호스트가 승리 조건을 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
+          popup.style.left = '50%';
+          popup.style.top  = '50%';
+          popup.style.transform = 'translate(-50%, -50%)';
+          popup.style.display = 'block';
+        }
+        break;
+      }
+case 'DRAFT_READY': {
+  try {
+    // 모든 클라이언트: UI 카운트 갱신
+    if (msg.from) draftSignals.peersReady.add(msg.from);
+    updateDraftWaitingStatus();
+
+    // 앵커만 최종 확정 판단
+    if (isAnchor && typeof isAnchor === 'function' && isAnchor()) {
+      checkDraftFinalize();
+    }
+  } catch(e) {}
+  break;
+}
+      case 'DRAFT_SUBMIT': {
+  const team = msg.team;
+  const sender = msg.from;
+  const ids = Array.isArray(msg.ids) ? msg.ids : [];
+
+  // 검증: 팀/소유자/상태
+  if (team == null || !specialDraft?.active) break;
+  if (owners?.[String(team)] && owners[String(team)] !== sender) break;
+
+  // 선택 병합
+  for (const id of ids) {
+    const u = players.find(p => p.id === id && p.team === team && isSpecialUnit(p));
+    if (u) specialDraft.chosenIds.add(id);
+  }
+  // 팀별 카운트 재계산 및 완료 표시
+  specialDraft.chosenCount = recomputeChosenCountsFrom(specialDraft.chosenIds);
+  specialDraft.doneByTeam[team] = true;
+
+  // 앵커가 상태 배포 및 최종 확정 판단
+  if (isAnchor && typeof isAnchor === 'function' && isAnchor()) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+    checkDraftFinalize();
+  }
+  break;
+}
+
+      case 'DRAFT_FINALIZE': {
+        try { 
+          finalizeSpecialDraft(); 
+        } catch(e){
+          console.warn('DRAFT_FINALIZE error:', e);
+        }
+        if (typeof renderSpecialDraft === 'function') {
+          try { 
+            renderSpecialDraft(); 
+          } catch(e){
+            console.warn('renderSpecialDraft error:', e);
+          }
+        }
+        if (isAnchor && typeof isAnchor === 'function' && isAnchor()) {
+          const state = toRoomState();
+          broadcast({ t: 'SYNC', state, hash: hashState() });
+        }
+        break;
+      }
+      
+      default: 
+        break;
+    }
+  } catch(e) {
+    console.error('onNetMsg error:', e, msg);
+  }
+}
+function startNetworkSelection() {
+  // 오프라인/온라인 선택 팝업 (드래프트 팝업보다 우선)
+  popup.innerHTML = '<p class="font-bold mb-2">게임 모드 선택</p>';
+  const offBtn = document.createElement('button');
+  offBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-2';
+  offBtn.textContent = '오프라인(한 기기에서 플레이)';
+  offBtn.onclick = () => {
+    popup.dataset.lock = '0';  // 추가
+    popup.style.display = 'none';
+    online = false; isHost = false; roomId = null; roomRef = null;
+    mpStatus.textContent = '오프라인';
+    startModeSelection();
+  };
+  const onBtn = document.createElement('button');
+  onBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
+  onBtn.textContent = '온라인(방 생성/입장 후 호스트가 시작)';
+  onBtn.onclick = () => {
+    popup.dataset.lock = '0';  // 추가
+    popup.style.display = 'none';
+    mpStatus.textContent = '온라인 모드(방을 만들거나 입장하세요)';
+    online = true;
+  };
+  popup.appendChild(offBtn);
+  popup.appendChild(onBtn);
+  // 중앙 표시
+  popup.style.left = '50%';
+  popup.style.top = '50%';
+  popup.style.transform = 'translate(-50%, -50%)';
+  popup.style.display = 'block';
+  popup.dataset.lock = '1';            // drawBoard가 자동으로 닫지 않도록 잠금
+try { drawBoard(); } catch(e) {}
+}
+// 부팅
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startNetworkSelection, { once: true });
+} else {
+  startNetworkSelection();
+}
+setInterval(() => {
+  if (online && myPeerId === anchorId() && !modeSelect?.active && !specialDraft?.active && !randomDraft?.active) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+  }
+}, 5000);
+endTurnBtn.addEventListener('click', () => {
+    if (online && !awaitGetIsMyTurn()) { status.textContent='내 차례가 아닙니다'; return; }
+  selectedPlayerId = null;
+  if (online) {
+    const a = makeAction('ENDTURN', {});
+    // 로컬 적용
+    endTurn();
+    // post hash + 브로드캐스트
+    a.post = hashState();
+    broadcast(a);
+    return;
+  }
+  // 오프라인
+  endTurn();
+});
+// ===== 방 스켈레톤 & 로비/시작 =====
+function roomSkeleton(){
+  return {
+    status: 'lobby',
+    version: 0,
+    // 팀 소유자 매핑(0~3팀)
+    owners: {},   // { "0": "clientId...", ... }
+    // 시작 전 임시 정보
+    slots: [0,1,2,3], // 팀 슬롯
+    hostId: null,
+    // 게임 상태 필드(playing에서 사용)
+    players: [],
+    currentTurn: 0,
+    currentRound: 1,
+    moveEnergy: 0,
+    diceRolledThisTurn: false,
+    lastDiceRoll: null,
+    snowballs: [],
+    // 복잡 상태 그대로 저장(1차판)
+    ninjaSwap:{active:false,ninjaId:null},
+    cartLink:{active:false,pusherId:null,mateId:null,roundTagged:null},
+    castleTeleport:{active:false,pieceId:null,team:null,fromXY:null},
+    formTrans:{picking:false,trancerId:null},
+    keeperChoice:{active:false,keeperId:null},
+    specialDraft:{active:false, chosenCount:[0,0,0,0], chosenIds:[], focusId:null, team:0},
+    randomDraft:{active:false, round:0, order:[0,1,2,3], idx:0, pool:[], taken:[]},
+    deploy:{active:false, order:[3,2,1,0], idx:0, queueByTeam:{}, startPos:{}},
+    modeSelect:{active:false},
+    gameMode:null,
+    winModeSelect:{active:false},
+    winMode:'territory'
+  };
+}
+// 간단 액션 커밋(상태 전체 덮어쓰기) — 1차판
+// P2P로 교체
+createRoomBtn.addEventListener('click', p2pCreateRoom);
+joinRoomBtn.addEventListener('click', () => {
+  const code = roomInput.value.trim().toUpperCase();
+  if (!code) {
+    alert('방 코드를 입력하세요');
+    return;
+  }
+  
+  // 방 코드로 직접 연결 시도
+  p2pJoinRoom();
+});
+leaveRoomBtn.addEventListener('click', () => {
+  resetPeerConnection();
+  online = false; roomCode = null;
+  mpStatus.textContent = '오프라인';
+  updateStartBtnLock();
+  owners = {};
+renderTeamSlots?.();
+});
+startOnlineBtn.addEventListener('click', () => {
+  if (!(myPeerId && __hostId && myPeerId === __hostId)) {
+    alert('호스트만 시작할 수 있습니다');
+    return;
+  }
+  if (!myPeerId) { alert('내 PeerID가 아직 열리지 않았습니다. 잠시 후 다시 시도.'); return; }
+
+  // 모든 피어에게 "게임 시작" 신호
+  try { broadcast({ t: 'START' }); } catch(e){}
+
+  // 호스트 로컬도 즉시 시작
+  try { startModeSelection(); } catch(e){}
+
+  // 초기 상태 동기화(참여자 UI 대비)
+  setTimeout(() => {
+    const state = toRoomState();
+    broadcast({ t:'SYNC', state, hash: hashState() });
+  }, 0);
+});
+
+// 모드 버튼
+localModeBtn?.addEventListener('click', ()=>{
+  online = false; mpStatus.textContent = '오프라인';
+});
+onlineModeBtn?.addEventListener('click', ()=>{
+  online = true;  mpStatus.textContent = '온라인 대기(방 만들기/입장)';
+  setTimeout(renderTeamSlots, 0); // ★ 추가: 모드 전환 직후 슬롯 갱신
+});
+(function setupUiToggle(){
+  const btn = document.getElementById('toggleUiBtn');
+  const key = 'board_ui_hidden';
+  const apply = (hide) => {
+    document.body.classList.toggle('ui-hidden', hide);
+    btn.textContent = hide ? 'UI 보이기' : 'UI 숨기기';
+  };
+  apply(localStorage.getItem(key) === '1');
+  btn.addEventListener('click', () => {
+    const hide = !document.body.classList.contains('ui-hidden');
+    localStorage.setItem(key, hide ? '1' : '0');
+    apply(hide);
+  });
+})();
+
+// ★ 추가: 스킬창 토글
+(function setupSkillMenu(){
+  if (!skillMenuBtn || !skillPopup) return;
+  skillMenuBtn.addEventListener('click', () => {
+  if (skillPopup.style.display === 'block') {
+    skillPopup.style.display = 'none';
+    skillMenuBtn.textContent = '스킬창';
+  } else {
+    renderSkillMenu();
+    centerPopup(skillPopup);
+    skillMenuBtn.textContent = '스킬창 닫기';
+  }
+});
+  document.addEventListener('click', (e) => {
+    if (skillPopup.style.display === 'block' && 
+        !skillPopup.contains(e.target) && 
+        e.target !== skillMenuBtn) {
+      skillPopup.style.display = 'none';
+      skillMenuBtn.textContent = '스킬창 보이기';
+    }
+  });
+})();
+(function setupEvoMenu(){
+  if (!evoMenuBtn || !evoPopup) return;
+
+  const updateBtnState = () => {
+    const used = evolutionUsed?.[currentTurn];
+    evoMenuBtn.disabled = !!used;
+    evoMenuBtn.classList.toggle('opacity-50', !!used);
+    evoMenuBtn.classList.toggle('cursor-not-allowed', !!used);
+  };
+  updateBtnState();
+
+  evoMenuBtn.addEventListener('click', () => {
+    if (evolutionUsed?.[currentTurn]) return; // 이미 사용됨
+    renderEvoMenu();
+  });
+
+  document.addEventListener('keydown', () => updateBtnState());
+  // (function setupEvoMenu(){ ... 중 하단)
+const _endTurnOrig = endTurn;
+// 왜: 스킬/진화 버튼 상태 갱신을 위해 endTurn 호출을 래핑(전개 파라미터 필요)
+endTurn = function(...args){
+  const result = _endTurnOrig.apply(null, args);
+  updateBtnState();
+  return result;
+};
+})();
+function renderSkillMenu() {
+  if (!skillPopup) return;
+
+  // 먼저 항상 보이도록 열어 둔다(중간 return으로도 확실히 열림 보장)
+  skillPopup.style.display = 'block';
+  skillPopup.innerHTML = ''; // 이전 내용 잔상 방지
+
+  // 온라인 모드에서 내 차례가 아니면 안내만
+  if (online && !awaitGetIsMyTurn()) {
+    skillPopup.innerHTML = '<p class="text-center text-lg">내 차례가 아닙니다</p>';
+    centerPopup(skillPopup);
+    return;
+  }
+
+  // 선택 특수 병사 우선(있으면 그 병사만), 없으면 팀 전체 특수 병사
+  let units = players.filter(p => p.team === currentTurn && isSpecialUnit(p));
+  const focused = players.find(p => p.id === selectedPlayerId);
+  if (focused && focused.team === currentTurn && isSpecialUnit(focused)) {
+    units = [focused];
+  }
+
+  if (units.length === 0) {
+    skillPopup.innerHTML = '<p class="text-center text-lg">사용 가능한 스킬이 없습니다</p>';
+    centerPopup(skillPopup);
+    return;
+  }
+
+  skillPopup.innerHTML = '<h2 class="text-2xl font-bold mb-4 text-center">🎯 스킬 목록</h2>';
+let availableSkills = getAvailableSkills(units);
+// 왜: 선택 병사 기준으로 0개면 빈 화면처럼 보임 → 팀 전체 특수 병사 스킬로 폴백
+if (units.length === 1 && availableSkills.length === 0) {
+  const teamUnits = players.filter(p => p.team === currentTurn && isSpecialUnit(p));
+  availableSkills = getAvailableSkills(teamUnits);
+}
+
+  if (availableSkills.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'text-center text-lg';
+    p.textContent = '현재 사용 가능한 스킬이 없습니다';
+    skillPopup.appendChild(p);
+  } else {
+    availableSkills.forEach(skill => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'block w-full text-left px-4 py-3 rounded-lg mb-2';
+      btn.disabled = !skill.available;
+
+      const header = document.createElement('div');
+      header.className = 'font-bold text-lg mb-1';
+      header.textContent = `${skill.icon} ${skill.unitName} — ${skill.skillName}`;
+
+      const desc = document.createElement('div');
+      desc.className = 'text-sm opacity-90';
+      desc.textContent = skill.description;
+
+      const condition = document.createElement('div');
+      condition.className = 'text-xs mt-1 opacity-75';
+      condition.textContent = skill.condition;
+
+      btn.appendChild(header);
+      btn.appendChild(desc);
+      btn.appendChild(condition);
+
+      if (skill.available) {
+        // 왜: 스킬 실행 시 팝업 닫기 및 버튼 라벨 되돌리기
+        btn.onclick = () => {
+          executeSkill(skill);
+          skillPopup.style.display = 'none';
+          skillMenuBtn.textContent = '스킬창';
+        };
+      }
+
+      skillPopup.appendChild(btn);
+    });
+  }
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'block w-full px-4 py-2 rounded-lg mt-4 bg-red-500 hover:bg-red-600';
+  closeBtn.textContent = '닫기';
+  closeBtn.onclick = () => {
+    skillPopup.style.display = 'none';
+    skillMenuBtn.textContent = '스킬창';
+  };
+  skillPopup.appendChild(closeBtn);
+
+  // 마지막에 위치만 맞춰준다
+  centerPopup(skillPopup);
+}
+function renderEvoMenu(){
+  // 온라인에서 내 차례 아니면 표시만
+  if (online && !awaitGetIsMyTurn()) {
+    evoPopup.innerHTML = '<h2 class="text-2xl font-bold mb-3 text-center">🧬 진화</h2><p class="text-center">내 차례가 아닙니다</p>';
+    evoPopup.style.display = 'block';
+    centerPopup(evoPopup);
+    return;
+  }
+
+  if (evolutionUsed?.[currentTurn]) {
+    evoPopup.innerHTML = '<h2 class="text-2xl font-bold mb-3 text-center">🧬 진화</h2><p class="text-center">이 팀은 이미 진화를 사용했습니다</p>';
+    evoPopup.style.display = 'block';
+    centerPopup(evoPopup);
+    return;
+  }
+
+  const candidates = players.filter(p => p.team === currentTurn && canEvolve(p));
+
+  evoPopup.innerHTML = '<h2 class="text-2xl font-bold mb-4 text-center">🧬 진화 가능한 특수 병사</h2>';
+
+  if (candidates.length === 0) {
+    const none = document.createElement('p');
+    none.className = 'text-center text-lg';
+    none.textContent = '진화 가능한 특수 병사가 없습니다';
+    evoPopup.appendChild(none);
+  } else {
+    candidates.forEach(u => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'block w-full text-left px-4 py-3 rounded-lg mb-2';
+      btn.textContent = `${u.name} — 전:${u.power} / 이:${u.movement} / 사:${u.range}`;
+      btn.onclick = () => {
+        const ok = applyEvolution(u);
+        if (ok) {
+          u._evolved = true;
+          evolutionUsed[currentTurn] = true;
+          evoPopup.style.display = 'none';
+          drawBoard();
+        }
+      };
+      evoPopup.appendChild(btn);
+    });
+  }
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'block w-full px-4 py-2 rounded-lg mt-3';
+  closeBtn.textContent = '닫기';
+  closeBtn.onclick = () => { evoPopup.style.display = 'none'; };
+  evoPopup.appendChild(closeBtn);
+
+  evoPopup.style.display = 'block';
+  centerPopup(evoPopup);
+}
+// ✅ 공용: 상인 스킬 실행
+function beginMerchantTrade(merchant) {
+  if (!merchant) { status && (status.textContent = '상인: 대상 없음'); return; }
+  if (merchant._usedThisTurn) { status && (status.textContent = '상인: 이번 턴에 이미 사용'); return; }
+
+  const team = merchant.team;
+
+  // 희생 후보: 같은 팀, 본인/왕/성 제외, 판 위에 존재
+  const candidates = players.filter(u =>
+    u.team === team &&
+    u.id !== merchant.id &&
+    u.name !== '왕' &&
+    !(typeof isCastle === 'function' && isCastle(u)) &&
+    Number.isInteger(u.x) && Number.isInteger(u.y) && u.x >= 0 && u.y >= 0
+  );
+
+  if (candidates.length === 0) {
+    status && (status.textContent = '상인: 희생할 아군이 없습니다');
+    return;
+  }
+
+  // 스냅샷 먼저
+  pushSnapshot('skill:merchant');
+
+  // 무작위 희생
+  const victim = candidates[Math.floor(Math.random() * candidates.length)];
+  const vx = victim.x, vy = victim.y;
+  const victimName = victim.name;
+
+  // 특수(45%) / 일반(55%)
+  let newUnit = null;
+  if (Math.random() < 0.45) {
+    // ✅ ‘블레이즈 & 엠버’ 제외 / ‘블레이즈’, ‘엠버’ 각각 포함
+    const specialPool = [
+      '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼',
+      '의사','좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인',
+      '응원단장','트럭 운전사','블레이즈','엠버','개미','비숍','산타클로스','샤워기'
+    ];
+    const pick = specialPool[Math.floor(Math.random() * specialPool.length)];
+    newUnit = createSpecialUnitByName(pick, team);
+  } else {
+    // 일반 병사 생성기 (프로젝트 컨벤션에 맞게 조정)
+    newUnit = {
+      id: `p${team+1}-m-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '일반 병사',
+      team, x: vx, y: vy,
+      color: getTeamColor ? getTeamColor(team) : undefined,
+      power: 1, movement: 1, range: 0
+    };
+  }
+
+  // 희생 → 소환
+  removePlayer(victim, true);
+  if (newUnit) { newUnit.x = vx; newUnit.y = vy; players.push(newUnit); }
+
+  merchant._usedThisTurn = true;
+
+  const tradeMsg = `상인: ${victimName} 제거 → ${newUnit ? newUnit.name : '실패'}`;
+  showCenterMessage?.(tradeMsg, 2000);
+  flashCell?.(vx, vy, 1000);
+  drawBoard?.();
+  // executeSkill()이 이후에 status를 일반 문구로 덮어쓰므로, 그 다음 틱에 거래 결과로 다시 덮어쓴다
+  setTimeout(() => { status && (status.textContent = tradeMsg); }, 0);
+  setTimeout(() => { drawBoard(); }, 2000);
+
+  if (online) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+  }
+}
+function getAvailableSkills(units) {
+  const skills = [];
+  const canBuildCastle = (u) =>
+    (countCastles(u.team) < 5) &&
+    !hasCastleAt(u.team, u.x, u.y) &&
+    !cellOccupied(u.x, u.y);
+
+  units.forEach((unit) => {
+    const name = unit.name;
+    // ⑫ 비숍: 대각선 질주
+if (name === '비숍' && unit.team === currentTurn) {
+  skills.push({
+    icon: '♗',
+    unitName: '비숍',
+    skillName: '대각선 질주',
+    description: '이번 차례에 한 번, 대각선으로 몇 칸이든 이동(경로 첫 점유칸 뒤는 불가).',
+    condition: '차례당 1회',
+    available: !unit._usedThisTurn,
+    execute: () => {
+      bishopDash.active = true;
+      bishopDash.unitId = unit.id;
+      if (popup) popup.style.display = 'none';
+      status && (status.textContent = '대각선 목적지 칸을 클릭하세요');
+    }
+  });
+}
+    // ⑬ 샤워기: 웅덩이 만들기
+    if (name === '샤워기' && unit.team === currentTurn) {
+      const blockedByMate = players.some(p =>
+        p.id !== unit.id && p.x === unit.x && p.y === unit.y && !canStandOnWaterPuddle(p)
+      );
+      const can = (currentRound % 3 === 0) && !unit._usedThisTurn && !blockedByMate;
+      skills.push({
+        icon: '🚿',
+        unitName: '샤워기',
+        skillName: '웅덩이 만들기',
+        description: "현재 칸을 '물 웅덩이'로 만듭니다. 샤워기·개구리·고목·범고래 외의 말은 물 웅덩이 위에 있을 수 없습니다.",
+        condition: '3턴마다 사용 가능',
+        available: can,
+        execute: () => {
+          if (!isWaterPuddle(unit.x, unit.y)) waterPuddles.push({ x: unit.x, y: unit.y });
+          unit._usedThisTurn = true;
+          updateShowerPressureBuff();
+          drawBoard();
+        }
+      });
+    }
+    // ① 기자: 특종 (5턴마다, 자기 위치로 아군 집결)
+    if (name === '기자') {
+      const can = (currentRound % 5 === 0) && (unit._lastGatherRound !== currentRound);
+      skills.push({
+        icon: '📰',
+        unitName: '기자',
+        skillName: '특종',
+        description: '모든 아군을 기자의 위치로 소환합니다.',
+        condition: '5턴마다 사용 가능',
+        available: can,
+        execute: () => {
+          const tx = unit.x, ty = unit.y;
+          for (const u of players) {
+            if (u.team === unit.team && u.id !== unit.id) {
+              u.x = tx; u.y = ty;
+            }
+          }
+          unit._lastGatherRound = currentRound;
+          drawBoard();
+        }
+      });
+    }
+
+    // ② 사육사/코끼리/고양이/개구리: 대신 싸우기 (2턴마다 변신 메뉴)
+    if (name === '사육사' || name === '코끼리' || name === '고양이' || name === '개구리') {
+      const can = (currentRound % 2 === 0);
+      skills.push({
+        icon: '🦁',
+        unitName: name,
+        skillName: '대신 싸우기',
+        description: '동물 형태로 변신합니다.',
+        condition: '2턴마다 사용 가능',
+        available: can,
+        execute: () => { beginKeeperChoice(unit); }
+      });
+    }
+
+    // ③ 건축가: 성 쌓기
+    if (name === '건축가') {
+      const can = (currentRound % 2 === 0) && unit._castleBuiltRound !== currentRound;
+      skills.push({
+        icon: '🏗️',
+        unitName: '건축가',
+        skillName: '성 쌓기',
+        description: '현재 위치에 성을 즉시 건설합니다.',
+        condition: '짝수 턴마다 1회 사용 가능',
+        available: can,
+        execute: () => { addCastle(unit.team, unit.x, unit.y); unit._castleBuiltRound = currentRound; drawBoard(); }
+      });
+    }
+
+    // ④ 닌자: 침투
+    if (name === '닌자' || name === '숙련된 닌자') {
+      const can = (currentRound % 3 === 0) && isAlone(unit) && !ninjaSwappedThisTurn;
+      skills.push({
+        icon: '🥷',
+        unitName: name,
+        skillName: '침투',
+        description: '사거리 내 적과 위치를 바꿉니다.',
+        condition: '3턴마다, 혼자 있을 때 사용 가능',
+        available: can,
+        execute: () => { beginNinjaSwap(unit); }
+      });
+    }
+
+    // ⑤ 수레꾼: 손님 받아라
+    if (name === '수레꾼') {
+      skills.push({
+        icon: '🛒',
+        unitName: '수레꾼',
+        skillName: '손님 받아라',
+        description: '같은 칸의 아군과 연결하여 함께 이동합니다.',
+        condition: '항상 사용 가능',
+        available: true,
+        execute: () => { beginCartLink(unit); }
+      });
+    }
+
+    // ⑥ 폼트랜서: 변신
+    if (name === '폼트랜서' || name === '폼트렌서') {
+      const can = (currentRound % 3 === 0);
+      skills.push({
+        icon: '🎭',
+        unitName: '폼트랜서',
+        skillName: '변신',
+        description: '특수 병사로 변신합니다(차례 종료 시 원복).',
+        condition: '3턴마다 사용 가능',
+        available: can,
+        execute: () => { beginFormPick(unit); }
+      });
+    }
+
+    // ⑦ 스키퍼: 턴 스킵
+    if (name === '스키퍼') {
+      const can = diceRolledThisTurn && !unit._usedThisTurn && lastDiceRoll >= 6;
+      skills.push({
+        icon: '⏭️',
+        unitName: '스키퍼',
+        skillName: '턴 스킵',
+        description: '턴 수를 1~5 증가시킵니다.',
+        condition: '주사위 6 이상일 때, 차례당 1회',
+        available: can,
+        execute: () => { beginTricksterMenu(unit); }
+      });
+    }
+
+    // ⑧ 여왕개미: 개미 다루기
+    if (name === '여왕개미') {
+      const can = (currentRound % 4 === 0) && !unit._usedThisTurn;
+      skills.push({
+        icon: '👑',
+        unitName: '여왕개미',
+        skillName: '개미 다루기',
+        description: '개미 3마리 소환 또는 모든 아군 개미 전투력 +0.25.',
+        condition: '4턴마다 사용 가능',
+        available: can,
+        execute: () => { beginQueenMenu(unit); }
+      });
+    }
+
+    // ⑨ 상인: 거래 (오류 수정됨)
+    if (name === '상인') {
+        skills.push({
+          icon: '💰',
+          unitName: '상인',
+          skillName: '거래',
+          description: '아군 하나를 희생하여 새로운 유닛을 소환합니다.',
+          condition: '차례당 1회',
+          available: !unit._usedThisTurn,
+          execute: () => beginMerchantTrade(unit)
+        });
+    }
+
+    // ⑩ 트럭 운전사: 2D 세카이
+    if (name === '트럭 운전사') {
+      const can = (currentRound % 5 === 0) && ((unit._dirStreak || 0) >= 2) && !unit._truckUsedThisTurn;
+      skills.push({
+        icon: '🚚',
+        unitName: '트럭 운전사',
+        skillName: '2D 세카이로 보내기',
+        description: '현재 위치 기준 반경 2칸 유닛을 즉시 잠시 제외합니다.',
+        condition: '5턴마다, 직전 2회 연속 같은 방향으로 이동한 후 사용 가능',
+        available: can,
+        execute: () => {
+          unit._truckUsedThisTurn = true;
+          unit._dirStreak = 0; // 스킬 사용 후 방향 스트릭 초기화(재사용하려면 다시 2연속 이동 필요)
+
+          // 트럭 운전사 현재 위치 기준 반경 2칸(맨해튼 거리) 이내의 유닛을 즉시 잠시 제외
+          const nearby = players.filter(p =>
+            p.id !== unit.id &&
+            p.x >= 0 && p.y >= 0 &&
+            (Math.abs(p.x - unit.x) + Math.abs(p.y - unit.y)) <= 2
+          );
+          banishUnits(nearby, 2, unit.id);
+
+          if (popup) popup.style.display = 'none';
+          drawBoard();
+        }
+      });
+    }
+
+    // ⑪ 엠버: 블레이즈와 연결
+    if (name === '엠버') {
+      const sameCellBlaze = players.find(p => p.team === unit.team && p.name === '블레이즈' && p.x === unit.x && p.y === unit.y && p.x >= 0);
+      if (sameCellBlaze && unit._linkedBlazeId !== sameCellBlaze.id) {
+        skills.push({
+          icon: '🔗',
+          unitName: '엠버',
+          skillName: '블레이즈와 연결',
+          description: '블레이즈와 연결합니다. 연결된 동안 엠버가 이동하는 칸에 블레이즈가 함께 따라옵니다. 서로 다른 칸에 있게 되면 연결이 풀립니다.',
+          condition: '블레이즈와 같은 칸에 있을 때',
+          available: true,
+          execute: () => {
+            unit._linkedBlazeId = sameCellBlaze.id;
+            drawBoard();
+          }
+        });
+      }
+    }
+
+    // 엠버: 블레이즈 육성
+    if (name === '엠버') {
+      const hasBlaze = players.some(p => p.team === unit.team && p.name === '블레이즈' && p.x >= 0 && p.y >= 0);
+      if (!hasBlaze && !unit._grownUsed) {
+        const canPromote = players.some(u => u.team === unit.team && u.name === '일반 병사' && u.x >= 0 && u.y >= 0);
+        skills.push({
+          icon: '🔥',
+          unitName: '엠버',
+          skillName: '블레이즈 육성',
+          description: '아군 일반 병사를 블레이즈로 전직시키고 그 위치로 이동합니다.',
+          condition: '팀에 블레이즈가 없을 때 1회',
+          available: canPromote,
+          execute: () => {
+            const cands = players.filter(u => u.team === unit.team && u.name === '일반 병사' && u.x >= 0 && u.y >= 0);
+            if (cands.length === 0) { if (status) status.textContent = '전직할 일반 병사가 없습니다'; return; }
+            const target = cands[Math.floor(Math.random() * cands.length)];
+            unit.x = target.x; unit.y = target.y;
+            target.name = '블레이즈';
+            target.type = 'blaze';
+            target.power = 1; target.range = 0; target.movement = 1;
+            if (!Array.isArray(target.tags)) target.tags = [];
+            if (!target.tags.includes('특수 병사')) target.tags.push('특수 병사');
+            unit._grownUsed = true;
+            updateBlazeEmberAura();
+            drawBoard();
+          }
+        });
+      }
+    }
+  });
+
+  // 조건을 만족하지 못하는 특수 병사들도 목록에 표시 (비활성 상태)
+  units.forEach((unit) => {
+    if (!isSpecialUnit || !isSpecialUnit(unit)) return;
+    const hasAny = skills.some(s => s.unitName === unit.name);
+    if (!hasAny) {
+      skills.push({
+        icon: '🔒',
+        unitName: unit.name,
+        skillName: '스킬/패시브',
+        description: '현재 사용 가능한 액티브 스킬이 없거나 패시브 유닛입니다.',
+        condition: '사용 불가',
+        available: false
+      });
+    }
+  });
+
+  return skills;
+}
+function updateBlazeEmberAura() {
+  const teams = new Set(players.filter(u => u.name === '블레이즈' || u.name === '엠버').map(u => u.team));
+  for (const t of teams) {
+    const blazes = players.filter(u => u.team === t && u.name === '블레이즈' && u.x >= 0 && u.y >= 0);
+    const embers = players.filter(u => u.team === t && u.name === '엠버'   && u.x >= 0 && u.y >= 0);
+
+    // 모든 블레이즈에 대해 같은 칸의 엠버 존재 여부로 버프·해제
+    for (const b of blazes) {
+      const sameCellEmber = embers.some(e => e.x === b.x && e.y === b.y);
+      if (sameCellEmber) {
+        b._emberBoosted = true;
+        b.power = 4;
+        b.movement = 0;
+      } else if (b._emberBoosted) {
+        b._emberBoosted = false;
+        b.power = 1;
+        b.movement = 1;
+      }
+    }
+
+    // 엠버-블레이즈 연결: 서로 다른 칸에 있게 되면 연결 해제
+    for (const e of embers) {
+      if (!e._linkedBlazeId) continue;
+      const linkedBlaze = players.find(u => u.id === e._linkedBlazeId);
+      if (!linkedBlaze || linkedBlaze.x !== e.x || linkedBlaze.y !== e.y || linkedBlaze.x < 0) {
+        e._linkedBlazeId = null;
+      }
+    }
+  }
+}
+function executeSkill(skill) {
+  pushSnapshot(`skill:${skill?.skillName || 'unknown'}`);
+  if (skill.execute) {
+    skill.execute();
+    // 비숍처럼 후속 클릭을 기다리는 스킬은 자체 안내 문구를 유지시킨다
+    if (!bishopDash.active) {
+      status && (status.textContent = `${skill.icon} ${skill.unitName} — ${skill.skillName} 사용!`);
+    }
+    drawBoard?.();
+    if (online) {
+      const state = toRoomState();
+      broadcast({ t: 'SYNC', state, hash: hashState() });
+    }
+  }
+}
+function centerPopup(popupEl) {
+  popupEl.style.left = '50%';
+  popupEl.style.top = '50%';
+  popupEl.style.transform = 'translate(-50%, -50%)';
+}
+(function enableBoardPanningAndCentering(){
+  const wrap = document.getElementById('boardWrapper');
+  const grid = document.getElementById('board');
+  if (!wrap || !grid) return;
+
+  function centerBoard() {
+    setTimeout(() => {
+      wrap.scrollLeft = Math.max(0, (grid.scrollWidth  - wrap.clientWidth)  / 2);
+      wrap.scrollTop  = Math.max(0, (grid.scrollHeight - wrap.clientHeight) / 2);
+    }, 0);
+  }
+  window.addEventListener('load', centerBoard);
+  window.addEventListener('resize', centerBoard);
+
+  let dragging = false, sx = 0, sy = 0, sl = 0, st = 0, pid = null, armed = false;
+wrap.addEventListener('pointerdown', (e) => {
+if (e.target.closest('#popup') || e.target.closest('button')) return;
+pid = e.pointerId;
+wrap.setPointerCapture(pid);
+sx = e.clientX; sy = e.clientY; sl = wrap.scrollLeft; st = wrap.scrollTop;
+armed = true; dragging = false;
+});
+wrap.addEventListener('pointermove', (e) => {
+if (!armed) return;
+const dx0 = e.clientX - sx, dy0 = e.clientY - sy;
+if (!dragging) {
+if (Math.abs(dx0) + Math.abs(dy0) > 3) dragging = true; // 임계값
+else return;
+}
+wrap.scrollLeft = sl - dx0;
+wrap.scrollTop = st - dy0;
+});
+const end = (ev) => {
+  const wasArmed = armed;
+  const wasDragging = dragging;
+
+  armed = false;
+  if (!pid) return;
+  try { wrap.releasePointerCapture(pid); } catch(e){}
+  pid = null;
+  dragging = false;
+
+  // 드래그가 아닌 '탭/클릭'이면, click 이벤트를 합성해 보드 셀의 클릭 핸들러가 확실히 실행되도록 보장
+  if (wasArmed && !wasDragging && ev && typeof ev.clientX === 'number' && typeof ev.clientY === 'number') {
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    if (el) {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    }
+  }
+};
+wrap.addEventListener('pointerup', (e) => end(e));
+wrap.addEventListener('pointercancel', (e) => end(e));
+wrap.addEventListener('pointerleave', (e) => end(e));
+})();
+  </script>
+</body>
+</html>
