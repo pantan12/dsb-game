@@ -578,15 +578,11 @@ async function p2pJoinRoom() {
     alert('방 코드를 입력하세요');
     return;
   }
-  resetPeerConnection();
   roomCode = code;
   __iAmCreator = false;
   __joinRetryCount = 0;
-
-  // 게스트용 Peer 생성
-  peer = new Peer(`${roomCode}-guest-${Math.random().toString(36).slice(2,6)}`);
-  wirePeerEvents();
   online = true;
+  createGuestPeer();
   mpStatus.textContent = `${roomCode} · 입장 시도 중...`;
 
   updateStartBtnLock();
@@ -597,6 +593,15 @@ function attemptConnectToHost() {
   const conn = peer.connect(hostId, { reliable: true });
   setupConn(conn);
   mpStatus.textContent = `${roomCode} · 호스트에 연결 중...`;
+}
+// 게스트용 Peer를 (재)생성한다. 재시도할 때도 이 함수를 다시 호출해서
+// 완전히 새로운 Peer/연결 객체로 시작한다 — 실패했던 기존 Peer에 대고
+// connect()를 다시 호출하면 PeerJS 내부적으로 이전 시도의 상태가 남아
+// 새 시도가 응답 없이 멈춰버리는 경우가 있어, 재시도는 항상 새 Peer로 한다.
+function createGuestPeer() {
+  resetPeerConnection();
+  peer = new Peer(`${roomCode}-guest-${Math.random().toString(36).slice(2,6)}`);
+  wirePeerEvents();
 }
 function wirePeerEvents() {
   peer.on('open', (id) => {
@@ -655,11 +660,12 @@ peer.on('error', (e) => {
     const hostConnOpen = conns.get(`${roomCode}-host`)?.open;
     if (!__iAmCreator && !hostConnOpen && __joinRetryCount < JOIN_MAX_RETRIES) {
       __joinRetryCount++;
+      const retryingRoomCode = roomCode;
       mpStatus.textContent = `${roomCode} · 방을 찾는 중... 재시도 (${__joinRetryCount}/${JOIN_MAX_RETRIES})`;
       setTimeout(() => {
-        // 그 사이에 나가기 등으로 상태가 바뀌었으면 재시도하지 않음
-        if (online && !__iAmCreator && peer && !peer.destroyed && !conns.get(`${roomCode}-host`)?.open) {
-          attemptConnectToHost();
+        // 그 사이에 나가기/다른 방 입장 등으로 상태가 바뀌었으면 재시도하지 않음
+        if (online && !__iAmCreator && roomCode === retryingRoomCode && !conns.get(`${roomCode}-host`)?.open) {
+          createGuestPeer();
         }
       }, JOIN_RETRY_DELAY_MS);
     } else {
