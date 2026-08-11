@@ -258,13 +258,14 @@ body { padding-bottom: 4.5rem; }
     </div>
     <div class="mt-2 grid grid-cols-2 md:grid-cols-6 gap-2">
       <input id="nameInput" class="col-span-2 px-2 py-1 rounded bg-gray-800 border border-gray-600" placeholder="닉네임">
-      <input id="roomInput" class="col-span-2 px-2 py-1 rounded bg-gray-800 border border-gray-600 font-mono" placeholder="방 코드(예: ABC123)">
+      <input id="roomInput" class="col-span-2 px-2 py-1 rounded bg-gray-800 border border-gray-600 font-mono" placeholder="원하는 방 코드 입력(비우면 자동 생성)">
       <button id="createRoomBtn" class="px-2 py-1 rounded bg-indigo-500 text-white">방 만들기</button>
       <button id="joinRoomBtn" class="px-2 py-1 rounded border border-gray-600">입장</button>
       <button id="startOnlineBtn" class="px-2 py-1 rounded bg-emerald-500 text-black" disabled title="호스트만 시작할 수 있습니다">온라인 시작(호스트)</button>
       <button id="leaveRoomBtn" class="px-2 py-1 rounded border border-gray-600">나가기</button>
     </div>
     <p class="mt-2 text-xs text-gray-400">※ 온라인: 각 디바이스에서 본인 차례에만 조작 가능. 오프라인: 현재처럼 한 기기에서 진행.</p>
+    <p class="mt-1 text-xs text-gray-400">※ 방장은 위 칸에 원하는 방 코드를 직접 입력한 뒤 "방 만들기"를 누르면 그 코드로 방이 만들어집니다. 비워두면 자동으로 만들어줍니다. 상태가 "방 생성 완료"로 바뀐 뒤에 친구에게 코드를 알려주세요.</p>
   </div>
   <div class="rounded-lg border border-gray-700 p-3">
     <div class="font-semibold mb-1">모드 선택</div>
@@ -462,6 +463,14 @@ function randRoom(){
   let s=''; for(let i=0;i<6;i++) s += chars[Math.floor(Math.random()*chars.length)];
   return s;
 }
+// 게스트가 호스트를 처음 찾는 단계에서만 쓰는 재시도 상태.
+// (호스트가 "방 만들기"를 누른 직후엔 자기 Peer가 시그널링 서버에 등록되기까지
+//  1~2초 정도 걸릴 수 있는데, 그 사이에 게스트가 코드를 입력해 접속을 시도하면
+//  "peer-unavailable"(방을 찾을 수 없음) 오류가 남 — 실제로는 방이 없는 게 아니라
+//  아직 준비 중인 것뿐이므로, 몇 차례 자동 재시도해서 이 경합을 흡수한다.)
+let __joinRetryCount = 0;
+const JOIN_MAX_RETRIES = 5;
+const JOIN_RETRY_DELAY_MS = 1500;
 // P2P (PeerJS)
 let online = false;
 let peer = null;          // 내 Peer
@@ -572,6 +581,7 @@ async function p2pJoinRoom() {
   resetPeerConnection();
   roomCode = code;
   __iAmCreator = false;
+  __joinRetryCount = 0;
 
   // 게스트용 Peer 생성
   peer = new Peer(`${roomCode}-guest-${Math.random().toString(36).slice(2,6)}`);
@@ -580,6 +590,13 @@ async function p2pJoinRoom() {
   mpStatus.textContent = `${roomCode} · 입장 시도 중...`;
 
   updateStartBtnLock();
+}
+// 게스트 → 호스트 접속 시도(최초 시도 및 재시도에서 공용으로 사용)
+function attemptConnectToHost() {
+  const hostId = `${roomCode}-host`;
+  const conn = peer.connect(hostId, { reliable: true });
+  setupConn(conn);
+  mpStatus.textContent = `${roomCode} · 호스트에 연결 중...`;
 }
 function wirePeerEvents() {
   peer.on('open', (id) => {
@@ -599,10 +616,7 @@ function wirePeerEvents() {
       mpStatus.textContent = `${roomCode} · 방 생성 완료 (호스트)`;
     } else {
       // 게스트라면 호스트에게 연결 시도
-      const hostId = `${roomCode}-host`;
-      const conn = peer.connect(hostId, { reliable: true });
-      setupConn(conn);
-      mpStatus.textContent = `${roomCode} · 호스트에 연결 중...`;
+      attemptConnectToHost();
     }
     
     // 내 닉네임과 현재 연결된 피어 목록 전송
@@ -634,7 +648,20 @@ peer.on('disconnected', () => {
 peer.on('error', (e) => {
   console.warn('Peer error:', e);
   if (e.type === 'peer-unavailable') {
-    mpStatus.textContent = `${roomCode} · 연결 실패: 방을 찾을 수 없습니다`;
+    // 게스트가 호스트를 아직 못 찾은 경우: 호스트 쪽 Peer가 시그널링 서버에
+    // 등록되는 중일 수 있으므로 잠시 후 자동 재시도한다 (아직 연결된 적이 없을 때만).
+    if (!__iAmCreator && conns.size === 0 && __joinRetryCount < JOIN_MAX_RETRIES) {
+      __joinRetryCount++;
+      mpStatus.textContent = `${roomCode} · 방을 찾는 중... 재시도 (${__joinRetryCount}/${JOIN_MAX_RETRIES})`;
+      setTimeout(() => {
+        // 그 사이에 나가기 등으로 상태가 바뀌었으면 재시도하지 않음
+        if (online && !__iAmCreator && peer && !peer.destroyed && conns.size === 0) {
+          attemptConnectToHost();
+        }
+      }, JOIN_RETRY_DELAY_MS);
+    } else {
+      mpStatus.textContent = `${roomCode} · 연결 실패: 방을 찾을 수 없습니다. 방 코드와 호스트 접속 상태를 확인해 주세요`;
+    }
   } else if (e.type === 'network') {
     mpStatus.textContent = `${roomCode} · 네트워크 오류`;
   } else if (e.type === 'unavailable-id') {
