@@ -396,6 +396,7 @@ body { padding-bottom: 4.5rem; }
 <div class="mt-4 flex items-center justify-center gap-2">
   <p id="status" class="text-xl"></p>
   <span id="cartLinkIndicator" class="text-base font-semibold text-amber-300"></span>
+  <span id="shadowSwapIndicator" class="text-base font-semibold text-purple-300"></span>
 </div>
   <!-- 고정 HUD 바 -->
 <div id="hudBar" class="fixed left-0 right-0 bottom-0 bg-black border-t border-gray-700 text-white">
@@ -1036,6 +1037,7 @@ function handleRemoteSkill(payload){
     const board = document.getElementById('board');
     const status = document.getElementById('status');
     const cartLinkIndicator = document.getElementById('cartLinkIndicator');
+    const shadowSwapIndicator = document.getElementById('shadowSwapIndicator');
     const turnDisplay = document.getElementById('turnDisplay');
     const popup = document.getElementById('popup');
 const skillPopup = document.getElementById('skillPopup');  // ★ 추가
@@ -1063,6 +1065,7 @@ const shopMenuBtn = document.getElementById('shopMenuBtn');
     const snowballs = []; // {x,y}
     const gifts = []; // {x,y}
     const waterPuddles = []; // {x,y} - 샤워기의 '웅덩이 만들기'로 생성되는 물 웅덩이 칸
+    let shadowMarkers = []; // {x,y,unitName,isSpecial} - 그림자 군주가 있을 때 유닛 제거 시 생기는 그림자
     // ===== 승리 조건: 정가운데 보라색 칸 점수제 =====
     const teamScores = [0, 0, 0, 0];
     let gameEnded = false;
@@ -1155,8 +1158,9 @@ function toRoomState(){
     size,
     players, currentTurn, currentRound,
     moveEnergy, diceRolledThisTurn, lastDiceRoll,
-    snowballs,gifts,
+    snowballs,gifts, shadowMarkers,
     ninjaSwap, cartLink, formTrans, keeperChoice,
+    shadowSwap: { active: shadowSwap.active, lordId: shadowSwap.lordId, targetId: shadowSwap.targetId },
     castleMove: {
       active: castleMove.active,
       pickingTarget: castleMove.pickingTarget,
@@ -1213,9 +1217,11 @@ function applyRoomState(s){
   lastDiceRoll = s.lastDiceRoll ?? null;
   selectedPlayerId = null;
   snowballs.splice(0, snowballs.length, ...((s.snowballs)||[]));
+  shadowMarkers = (s.shadowMarkers) || [];
 
   Object.assign(ninjaSwap, s.ninjaSwap||{active:false,ninjaId:null});
   Object.assign(cartLink, s.cartLink||{active:false,pusherId:null,mateId:null,roundTagged:null});
+  Object.assign(shadowSwap, s.shadowSwap||{active:false,lordId:null,targetId:null});
   Object.assign(castleMove, s.castleMove||{active:false,pickingTarget:false,castleId:null,team:null});
   castleMove.selectedIds = new Set((s.castleMove?.selectedIds)||[]);
   Object.assign(formTrans, s.formTrans||{picking:false,trancerId:null});
@@ -1503,6 +1509,7 @@ function pushSnapshot(reason=''){
   players: deepClone(players),
   snowballs: deepClone(snowballs),
   gifts: deepClone(gifts),
+  shadowMarkers: deepClone(shadowMarkers),
   currentTurn, currentRound, moveEnergy, diceRolledThisTurn, lastDiceRoll, selectedPlayerId,
   ninjaSwap: deepClone(ninjaSwap), cartLink: deepClone(cartLink)
 });
@@ -1515,6 +1522,7 @@ function restoreLastSnapshot(){
   players.splice(0, players.length, ...snap.players);
   snowballs.splice(0, snowballs.length, ...snap.snowballs);
   gifts.splice(0, gifts.length, ...(snap.gifts || []));
+  shadowMarkers = snap.shadowMarkers || [];
   currentTurn = snap.currentTurn; 
 currentRound = snap.currentRound;
 moveEnergy = snap.moveEnergy; 
@@ -2035,6 +2043,25 @@ function addShowers() {
     });
   }
 }
+function addShadowLords() {
+  const startByTeam = new Map();
+  for (const p of players) {
+    if ((p.name === '왕' || p.name === '일반 병사') && !startByTeam.has(p.team)) {
+      startByTeam.set(p.team, { x: p.x, y: p.y });
+    }
+  }
+  for (const [team, pos] of startByTeam.entries()) {
+    if (players.some(pp => pp.team === team && pp.name === '그림자 군주')) continue;
+    players.push({
+      id: `shadowlord-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+      name: '그림자 군주',
+      team, x: pos.x, y: pos.y,
+      color: getTeamColor(team),
+      power: 1, movement: 0.5, range: 0,
+      type: 'shadowlord', tags: ['특수 병사'], _shadowSwapUses: 0
+    });
+  }
+}
     function getTeamColor(team) {
   const any = players.find(pp => pp.team === team && pp.color);
   return any ? any.color : 'bg-gray-500';
@@ -2232,6 +2259,8 @@ cell.addEventListener('click', handler);
   if (turnDisplay) turnDisplay.innerText = `턴: ${currentRound}`;
   updateScoreBoard();
   updateCartLinkIndicator();
+  updateShadowSwapIndicator();
+  updateShadowLordTeamTags();
   updateTurnSkillPanel();
 
   // 눈덩이 UI 동기화
@@ -2270,6 +2299,21 @@ for (let i = 0; i < gifts.length; i++) {
   gift.textContent = '🎁';
   cell.appendChild(gift);
 }
+  // 그림자 렌더 (그림자 군주 패시브로 생긴 그림자)
+  for (let i = 0; i < shadowMarkers.length; i++) {
+    const { x, y } = shadowMarkers[i];
+    const idx = y * size + x;
+    const cell = cells[idx];
+    if (!cell) continue;
+
+    const shadow = document.createElement('div');
+    shadow.className = 'absolute inset-0 flex items-center justify-center pointer-events-none';
+    shadow.style.fontSize = '18px';
+    shadow.style.opacity = '0.85';
+    shadow.title = `${shadowMarkers[i].unitName}의 그림자`;
+    shadow.textContent = '👻';
+    cell.appendChild(shadow);
+  }
   installMoveKeyHandler();
   updateBlazeEmberAura();
   updateShowerPressureBuff();
@@ -2282,6 +2326,23 @@ function updateShowerPressureBuff() {
       u.power = 4; u.range = 3;
     } else {
       u.power = 1; u.range = 1;
+    }
+  }
+}
+// ✅ 그림자 군주 패시브 ③: 그림자 군주가 판 위에 있는 동안, 그 팀의 모든 말에 '그림자' 태그를 부여
+// (실제 유닛 식별용 name은 건드리지 않고, 태그와 표시용 displayName()만 바꿔서
+//  '상인' 스킬 등 name 비교 로직이 그대로 동작하도록 함 — 이전에 name 자체를 바꿔서 스킬이 깨졌던 문제를 회피)
+function updateShadowLordTeamTags() {
+  const teamsWithLord = new Set(
+    players.filter(p => p.type === 'shadowlord' && p.x >= 0 && p.y >= 0).map(p => p.team)
+  );
+  for (const u of players) {
+    if (!Array.isArray(u.tags)) u.tags = [];
+    const has = u.tags.includes('그림자');
+    if (teamsWithLord.has(u.team)) {
+      if (!has) u.tags.push('그림자');
+    } else if (has) {
+      u.tags = u.tags.filter(t => t !== '그림자');
     }
   }
 }
@@ -2314,7 +2375,7 @@ function updateShowerPressureBuff() {
   if (status) {
     const ownerId = owners?.[String(piece.team)];
     const who = ownerId ? (nickMap.get(ownerId) || `${piece.team+1}P`) : `${piece.team+1}P`;
-    status.textContent = `선택됨: ${piece.name} (${who})`;
+    status.textContent = `선택됨: ${displayName(piece)} (${who})`;
   }
   if (popup) popup.style.display = 'none';
   drawBoard();
@@ -2493,6 +2554,7 @@ const pageItems = listing.slice(start, end);
       if (ninjaSwap?.active) { ninjaSwap.active = false; ninjaSwap.ninjaId = null; }
       if (cartLink?.active) { cancelCartLink(); }
       if (castleMove?.active || castleMove?.pickingTarget) { cancelCastleMove(); drawBoard(); }
+      if (shadowSwap?.active) { cancelShadowSwap(); if (skillPopup) skillPopup.style.display = 'none'; if (skillMenuBtn) skillMenuBtn.textContent = '스킬창'; drawBoard(); }
       if (isCastle?.(piece)) { removePlayer(piece); popup && (popup.style.display = 'none'); drawBoard(); }
       return;
     }
@@ -2509,7 +2571,7 @@ const pageItems = listing.slice(start, end);
   if (ok) {
     unit._evolved = true;
     evolutionUsed[unit.team] = true;
-    status && (status.textContent = `${unit.team+1}P의 ${unit.name}가 진화했습니다!`);
+    status && (status.textContent = `${unit.team+1}P의 ${displayName(unit)}가 진화했습니다!`);
     drawBoard();
   }
   return;
@@ -2525,6 +2587,12 @@ const pageItems = listing.slice(start, end);
         beginNinjaSwap?.(piece); return;
       }
       if (piece.name === '수레꾼') { beginCartLink?.(piece); return; }
+      if (piece.name === '그림자 군주') {
+        const marker = shadowMarkers.find(s => s.x === piece.x && s.y === piece.y);
+        if (marker) { performShadowExtraction?.(piece, marker); return; }
+        if ((piece._shadowSwapUses || 0) >= 2) { status && (status.textContent = '그림자 군주: 이번 차례에는 이미 그림자 교환을 2회 사용했습니다'); return; }
+        beginShadowSwap?.(piece); return;
+      }
       if (piece.name === '건축가' && currentRound % 2 === 0) {
   if (piece._castleBuiltRound === currentRound) {
     status && (status.textContent = '건축가: 이번 턴에는 이미 성을 건설했습니다');
@@ -2615,7 +2683,7 @@ if (piece.name === '상인') {
   }
   const victim = candidates[Math.floor(Math.random() * candidates.length)];
   const vx = victim.x, vy = victim.y;
-  const victimName = victim.name;
+  const victimName = displayName(victim);
 
   const roll = Math.random();
   let spawnedName = '';
@@ -2711,7 +2779,7 @@ function applyEvolution(u){
       return true;
 
     default:
-      status && (status.textContent = `${u.name}는 아직 진화 효과가 등록되지 않았습니다`);
+      status && (status.textContent = `${displayName(u)}는 아직 진화 효과가 등록되지 않았습니다`);
       return false;
   }
 }
@@ -3000,7 +3068,7 @@ function startOfTurnPassives(team){
           passives.push({ icon: '🚿', text: '샤워기: 물 웅덩이 위 — 전투력 4 / 사거리 3' });
         }
         if ((u._cheerBuffVal ?? 0) > 0) {
-          passives.push({ icon: '📣', text: `${u.name}: 응원단장 버프 적용 중 (+${u._cheerBuffVal})` });
+          passives.push({ icon: '📣', text: `${displayName(u)}: 응원단장 버프 적용 중 (+${u._cheerBuffVal})` });
         }
         if (u.name === '눈사람' && ((u.power ?? 0) > 0 || (u.range ?? 0) > 1)) {
           passives.push({ icon: '⛄', text: `눈사람: 눈덩이 습득 성장 — 전투력 ${u.power ?? 0} / 사거리 ${u.range ?? 0}` });
@@ -3068,9 +3136,67 @@ function startOfTurnPassives(team){
       checkScoreWin();
       updateScoreBoard();
     }
+    // ✅ 그림자 군주 패시브 ①: 유닛 제거 시 그림자 생성
+    // 그림자 군주가 판 위(팀 무관)에 하나라도 있으면, 제거되는 유닛의 그림자가 그 자리에 남는다.
+    // 성/왕은 제외(진영 파괴/멸망 처리와 얽히므로 대상에서 제외).
+    function spawnShadowOnRemoval(p) {
+      if (!p || typeof p.x !== 'number' || typeof p.y !== 'number' || p.x < 0 || p.y < 0) return;
+      if (p.name === '왕' || (typeof isCastle === 'function' && isCastle(p))) return;
+      const lordExists = players.some(u => u.type === 'shadowlord' && u.x >= 0 && u.y >= 0);
+      if (!lordExists) return;
+      const x = p.x, y = p.y;
+      shadowMarkers = shadowMarkers.filter(s => !(s.x === x && s.y === y));
+      shadowMarkers.push({ x, y, unitName: p.name, isSpecial: isSpecialUnit(p) });
+    }
+    // ✅ 그림자 군주 패시브 ②: 그림자 추출
+    // 일반 병사의 그림자 → 100%, 특수 병사의 그림자 → 30% 확률로 그 유닛을 그림자 군주의 팀으로 만든다.
+    function performShadowExtraction(lord, marker) {
+      pushSnapshot('skill:shadowExtract');
+      const mx = marker.x, my = marker.y;
+      shadowMarkers = shadowMarkers.filter(s => !(s.x === mx && s.y === my));
+
+      const chance = marker.isSpecial ? 0.30 : 1.0;
+      const success = Math.random() < chance;
+      let msg;
+
+      if (success) {
+        let newUnit = null;
+        if (marker.unitName === '개미') {
+          // spawnAntAt은 내부에서 players.push까지 수행함
+          newUnit = spawnAntAt(lord.team, mx, my);
+        } else if (!marker.isSpecial) {
+          newUnit = {
+            id: `p${lord.team+1}-shadow-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+            name: '일반 병사',
+            team: lord.team, x: mx, y: my,
+            color: getTeamColor ? getTeamColor(lord.team) : undefined,
+            power: 1, movement: 1, range: 0
+          };
+          players.push(newUnit);
+        } else {
+          newUnit = createSpecialUnitByName(marker.unitName, lord.team);
+          if (newUnit) { newUnit.x = mx; newUnit.y = my; players.push(newUnit); }
+        }
+        msg = `그림자 추출 성공! ${marker.unitName}의 그림자 → 아군 ${newUnit ? newUnit.name : marker.unitName} 획득`;
+      } else {
+        msg = `그림자 추출 실패... (${marker.unitName}의 그림자가 흩어졌습니다)`;
+      }
+
+      drawBoard();
+      status && (status.textContent = msg);
+      showCenterMessage?.(msg, 2000);
+
+      if (online) {
+        const state = toRoomState();
+        broadcast({ t: 'SYNC', state, hash: hashState() });
+      }
+    }
     function removePlayer(p, suppressMsg = false) {
   const index = players.indexOf(p);
   if (index === -1) return;
+  // ✅ 그림자 군주 패시브: 그림자 군주가 판 위에 있으면, 제거되는 유닛의 그림자가 그 자리에 생김
+  // (제거되는 유닛 자신이 그림자 군주인 경우도 포함하기 위해 splice 이전에 판정)
+  spawnShadowOnRemoval(p);
   players.splice(index, 1);
       if (p.name === '여왕개미') {
   for (let i = players.length - 1; i >= 0; i--) {
@@ -3105,6 +3231,7 @@ function endTurn() {
   if (typeof resolveBattles === 'function') resolveBattles();
 
   clearCartLinkForTeam?.(currentTurn);
+  if (shadowSwap?.active) { cancelShadowSwap(); if (skillPopup) skillPopup.style.display = 'none'; if (skillMenuBtn) skillMenuBtn.textContent = '스킬창'; }
   applyGomokEffects(currentTurn);
 
   revertFormForTeam(currentTurn);
@@ -3115,6 +3242,7 @@ function endTurn() {
     if (u.name === '여왕개미') u._usedThisTurn = false;
     if (u.name === '비숍') u._usedThisTurn = false; // ← 추가
     if (u.name === '샤워기') u._usedThisTurn = false;
+    if (u.name === '그림자 군주') u._shadowSwapUses = 0;
   }
 }
 
@@ -3187,6 +3315,7 @@ function resetOncePerTurnSkillsForTeam(team) {
     if (u.name === '상인') u._usedThisTurn = false;     // 기존
     if (u.name === '스키퍼') u._usedThisTurn = false;   // ★ 추가
     if (u.name === '여왕개미') u._usedThisTurn = false; // ★ 추가
+    if (u.name === '그림자 군주') u._shadowSwapUses = 0;
   });
 }
 function spawnAntAt(team, x, y) {
@@ -3227,6 +3356,125 @@ function updateCartLinkIndicator() {
   cartLinkIndicator.textContent = cartLink.mateId
     ? '🛒 수레꾼 연결됨'
     : '🛒 수레꾼 대상 선택 중';
+}
+// ✅ 그림자 군주: 그림자 교환 (skillPopup에 대상 목록 표시 → 선택 → 확인 버튼으로 위치 교환)
+const shadowSwap = { active: false, lordId: null, targetId: null };
+function beginShadowSwap(lord) {
+  shadowSwap.active = true;
+  shadowSwap.lordId = lord.id;
+  shadowSwap.targetId = null;
+  status && (status.textContent = '그림자 교환: 위치를 바꿀 그림자 태그 아군을 선택하세요 (P로 취소)');
+  renderShadowSwapPicker(lord);
+  updateShadowSwapIndicator();
+}
+function cancelShadowSwap() {
+  shadowSwap.active = false;
+  shadowSwap.lordId = null;
+  shadowSwap.targetId = null;
+  status && (status.textContent = '그림자 교환 취소');
+  updateShadowSwapIndicator();
+}
+function renderShadowSwapPicker(lord) {
+  if (!skillPopup) return;
+  skillPopup.style.display = 'block';
+  skillPopup.innerHTML = '<h2 class="text-xl font-bold mb-3 text-center">🌑 그림자 군주: 그림자 교환</h2>';
+
+  const targets = players.filter(p =>
+    p.team === lord.team && p.id !== lord.id &&
+    Array.isArray(p.tags) && p.tags.includes('그림자') &&
+    p.x >= 0 && p.y >= 0
+  );
+
+  if (targets.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'text-center text-lg';
+    p.textContent = '그림자 태그를 가진 아군이 없습니다';
+    skillPopup.appendChild(p);
+  } else {
+    const hint = document.createElement('p');
+    hint.className = 'text-sm text-center mb-2';
+    hint.style.opacity = '0.85';
+    hint.textContent = '위치를 교환할 아군을 선택하세요';
+    skillPopup.appendChild(hint);
+
+    targets.forEach(u => {
+      const picked = shadowSwap.targetId === u.id;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'block w-full text-left px-3 py-2 rounded mb-1';
+      btn.textContent = `${picked ? '✓ ' : ''}${displayName(u)} - 전투력:${u.power} / 이동:${u.movement} / 사거리:${u.range}`;
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        shadowSwap.targetId = picked ? null : u.id;
+        renderShadowSwapPicker(lord);
+        updateShadowSwapIndicator();
+      };
+      skillPopup.appendChild(btn);
+    });
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'block w-full px-4 py-2 rounded-lg mt-3 bg-emerald-500 hover:bg-emerald-600';
+    confirmBtn.disabled = !shadowSwap.targetId;
+    if (confirmBtn.disabled) confirmBtn.style.opacity = '0.5';
+    confirmBtn.textContent = '선택 확인';
+    confirmBtn.onclick = (e) => {
+      e.stopPropagation();
+      performShadowSwap();
+    };
+    skillPopup.appendChild(confirmBtn);
+  }
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'block w-full px-4 py-2 rounded-lg mt-2 bg-red-500 hover:bg-red-600';
+  cancelBtn.textContent = '취소';
+  cancelBtn.onclick = (e) => {
+    e.stopPropagation();
+    cancelShadowSwap();
+    skillPopup.style.display = 'none';
+    skillMenuBtn.textContent = '스킬창';
+    drawBoard();
+  };
+  skillPopup.appendChild(cancelBtn);
+
+  centerPopup(skillPopup);
+}
+function performShadowSwap() {
+  if (!shadowSwap.active || !shadowSwap.lordId || !shadowSwap.targetId) return;
+  const lord = players.find(p => p.id === shadowSwap.lordId);
+  const target = players.find(p => p.id === shadowSwap.targetId);
+  if (!lord || !target) { cancelShadowSwap(); return; }
+
+  pushSnapshot('skill:shadowSwap');
+  const lx = lord.x, ly = lord.y;
+  lord.x = target.x; lord.y = target.y;
+  target.x = lx; target.y = ly;
+  lord._shadowSwapUses = (lord._shadowSwapUses || 0) + 1;
+
+  const msg = `그림자 교환: ${displayName(lord)} ↔ ${displayName(target)}`;
+  shadowSwap.active = false;
+  shadowSwap.lordId = null;
+  shadowSwap.targetId = null;
+
+  if (skillPopup) skillPopup.style.display = 'none';
+  if (skillMenuBtn) skillMenuBtn.textContent = '스킬창';
+  updateShadowSwapIndicator();
+  drawBoard();
+  status && (status.textContent = msg);
+  showCenterMessage?.(msg, 1500);
+
+  if (online) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+  }
+}
+function updateShadowSwapIndicator() {
+  if (!shadowSwapIndicator) return;
+  if (!shadowSwap.active) { shadowSwapIndicator.textContent = ''; return; }
+  shadowSwapIndicator.textContent = shadowSwap.targetId
+    ? '🌑 그림자 교환 대상 선택됨'
+    : '🌑 그림자 교환 대상 선택 중';
 }
 const formTrans = { picking: false, trancerId: null };
 
@@ -3423,7 +3671,7 @@ function performNinjaSwap(target) {
     '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼','의사',
     '좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인', '응원단장',
     '트럭 운전사','블레이즈 & 엠버','블레이즈','엠버','비숍','샤워기',
-    '코끼리','고양이','개구리'
+    '코끼리','고양이','개구리','그림자 군주'
   ]);
   return names.has(u.name);
 }
@@ -3569,7 +3817,7 @@ if (online && (myTeam == null || !iCanPick)) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
-        btn.textContent = `✓ ${u.name} - 팀 ${u.team+1} / 전:${u.power} / 이:${u.movement} / 사:${u.range} (해제)`;
+        btn.textContent = `✓ ${displayName(u)} - 팀 ${u.team+1} / 전:${u.power} / 이:${u.movement} / 사:${u.range} (해제)`;
         btn.onclick = (e) => { e.stopPropagation(); togglePickSpecial(u.id); };
         pickedBox.appendChild(btn);
       });
@@ -3602,7 +3850,7 @@ if (online && (myTeam == null || !iCanPick)) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
-        btn.textContent = `${u.name} - 팀 ${u.team+1} / 전:${u.power} / 이:${u.movement} / 사:${u.range} (선택)`;
+        btn.textContent = `${displayName(u)} - 팀 ${u.team+1} / 전:${u.power} / 이:${u.movement} / 사:${u.range} (선택)`;
         btn.onclick = (e) => { e.stopPropagation(); togglePickSpecial(u.id); };
         popup.appendChild(btn);
       });
@@ -3708,7 +3956,7 @@ function beginFormtranceChoose(former){
     const btn = document.createElement('button');
     btn.type='button';
     btn.className='block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
-    btn.textContent = `${u.name} - 팀 ${u.team+1} / 전:${u.power} / 이:${u.movement} / 사:${u.range}`;
+    btn.textContent = `${displayName(u)} - 팀 ${u.team+1} / 전:${u.power} / 이:${u.movement} / 사:${u.range}`;
     btn.onclick = ()=> {
       pushSnapshot('formtrance');
       performFormtrance(former, u);
@@ -4675,7 +4923,7 @@ function askTycoonPlayerCountAndSetup() {
 const ALL_SPECIAL_NAMES = [
   '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼',
   '의사','좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인',
-  '응원단장','트럭 운전사','블레이즈 & 엠버','비숍','산타클로스','샤워기'
+  '응원단장','트럭 운전사','블레이즈 & 엠버','비숍','산타클로스','샤워기','그림자 군주'
 ];
 
 // 팀 시작 좌표(왕/일반 병사 기준)
@@ -4730,6 +4978,7 @@ function createSpecialUnitByName(name, team) {
     }
       case '비숍':     return { ...base, power: 0.5, range: 0, movement: 1, type: 'bishop' };
       case '샤워기':   return { ...base, power: 1, range: 1, movement: 1, type: 'shower', _usedThisTurn: false, tags: ['특수 병사', '친수성'] };
+      case '그림자 군주': return { ...base, power: 1, range: 0, movement: 0.5, type: 'shadowlord', _shadowSwapUses: 0 };
     default:
       return null;
   }
@@ -4947,7 +5196,12 @@ function pickRandomDraft(name){
 const evolutionUsed = [false, false, false, false];
 // 이름 표시(진화 표식)
 function displayName(u){
-  return u._evolved ? `${u.name}★` : u.name;
+  let n = u.name;
+  // 그림자 군주가 판 위에 있는 팀의 말은 이름 앞에 '그림자'를 붙여 표시(내부 name/스킬 판정은 그대로 유지)
+  if (u && Array.isArray(u.tags) && u.tags.includes('그림자') && !n.startsWith('그림자')) {
+    n = `그림자 ${n}`;
+  }
+  return u._evolved ? `${n}★` : n;
 }
 function initNormalDraft(){
   // 기존과 동일한 초기 추가 호출들
@@ -4974,6 +5228,7 @@ function initNormalDraft(){
 addBlazeEmberSeeds();
 addBishops();
 addShowers();
+addShadowLords();
   markSpecialTags();
   syncSnowballsToSnowmen();
   startSpecialDraft();
@@ -6064,10 +6319,13 @@ if (units.length === 1 && availableSkills.length === 0) {
 
       if (skill.available) {
         // 왜: 스킬 실행 시 팝업 닫기 및 버튼 라벨 되돌리기
+        // (단, 그림자 교환처럼 실행 후에도 skillPopup에서 대상 선택 UI를 계속 보여줘야 하는 스킬은 닫지 않음)
         btn.onclick = () => {
           executeSkill(skill);
-          skillPopup.style.display = 'none';
-          skillMenuBtn.textContent = '스킬창';
+          if (!shadowSwap.active) {
+            skillPopup.style.display = 'none';
+            skillMenuBtn.textContent = '스킬창';
+          }
         };
       }
 
@@ -6458,7 +6716,7 @@ function beginMerchantTrade(merchant) {
   // 무작위 희생
   const victim = candidates[Math.floor(Math.random() * candidates.length)];
   const vx = victim.x, vy = victim.y;
-  const victimName = victim.name;
+  const victimName = displayName(victim);
 
   // 특수(45%) / 일반(55%)
   let newUnit = null;
@@ -6546,6 +6804,39 @@ if (name === '비숍' && unit.team === currentTurn) {
           updateShowerPressureBuff();
           drawBoard();
         }
+      });
+    }
+    // ⑭ 그림자 군주: 그림자 추출 (자신이 서 있는 칸에 그림자가 있을 때)
+    if (name === '그림자 군주' && unit.team === currentTurn) {
+      const marker = shadowMarkers.find(s => s.x === unit.x && s.y === unit.y);
+      if (marker) {
+        skills.push({
+          icon: '👻',
+          unitName: '그림자 군주',
+          skillName: '그림자 추출',
+          description: `이 칸의 그림자(${marker.unitName})를 추출합니다. 일반 병사의 그림자는 100%, 특수 병사의 그림자는 30% 확률로 아군이 됩니다.`,
+          condition: '그림자가 있는 칸에서 사용 가능',
+          available: true,
+          execute: () => { performShadowExtraction(unit, marker); }
+        });
+      }
+    }
+    // ⑮ 그림자 군주: 그림자 교환 (차례당 2회, 그림자 태그를 가진 아군과 위치 교환)
+    if (name === '그림자 군주' && unit.team === currentTurn) {
+      const usesLeft = 2 - (unit._shadowSwapUses || 0);
+      const hasTarget = players.some(p =>
+        p.team === unit.team && p.id !== unit.id &&
+        Array.isArray(p.tags) && p.tags.includes('그림자') &&
+        p.x >= 0 && p.y >= 0
+      );
+      skills.push({
+        icon: '🌑',
+        unitName: '그림자 군주',
+        skillName: '그림자 교환',
+        description: '그림자 태그를 가진 아군 하나와 자신의 위치를 서로 바꿉니다.',
+        condition: `차례당 2회 (남은 ${Math.max(0, usesLeft)}회)`,
+        available: usesLeft > 0 && hasTarget,
+        execute: () => { beginShadowSwap(unit); }
       });
     }
     // ① 기자: 특종 (5턴마다, 자기 위치로 아군 집결)
@@ -6811,8 +7102,8 @@ function executeSkill(skill) {
   pushSnapshot(`skill:${skill?.skillName || 'unknown'}`);
   if (skill.execute) {
     skill.execute();
-    // 비숍처럼 후속 클릭을 기다리는 스킬은 자체 안내 문구를 유지시킨다
-    if (!bishopDash.active) {
+    // 비숍/그림자 교환처럼 후속 클릭·선택을 기다리는 스킬은 자체 안내 문구를 유지시킨다
+    if (!bishopDash.active && !shadowSwap.active) {
       status && (status.textContent = `${skill.icon} ${skill.unitName} — ${skill.skillName} 사용!`);
     }
     drawBoard?.();
