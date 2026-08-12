@@ -1974,8 +1974,8 @@ function addShowers() {
       return x >= c0 && x <= c1 && y >= c0 && y <= c1;
     }
     function getCornerColor(x, y) {
-      // 왕좌 쟁탈전: 점수용 가운데 칸이 의미가 없으므로 보라색으로 표시하지 않음
-      if (isCenterCell(x, y) && winMode !== 'king') return 'bg-purple-500';
+      // 왕좌 쟁탈전 / 타이쿤 모드: 점수용 가운데 칸이 의미가 없으므로 보라색으로 표시하지 않음
+      if (isCenterCell(x, y) && winMode !== 'king' && gameMode !== 'tycoon') return 'bg-purple-500';
       if (x === 0 && y === 0) return 'bg-red-500';
       if (x === size - 1 && y === 0) return 'bg-yellow-400';
       if (x === 0 && y === size - 1) return 'bg-green-500';
