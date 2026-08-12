@@ -224,6 +224,72 @@ body { padding-bottom: 4.5rem; }
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* 숨겨진 개발자 테스트 버튼: 평소엔 거의 안 보이다가 마우스를 올리면 살짝 드러남 */
+#devTestBtn {
+  position: fixed;
+  left: 4px;
+  bottom: 4px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: #222;
+  opacity: 0.10;
+  z-index: 100000;
+  transition: opacity 0.2s;
+}
+#devTestBtn:hover { opacity: 0.6; cursor: pointer; }
+#devPasswordPopup, #devPanel {
+  position: fixed;
+  z-index: 100000;
+  max-width: min(92vw, 44rem);
+  max-height: 82vh;
+  overflow-y: auto;
+  background: rgba(17, 17, 17, 0.98);
+  color: white;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  border: 2px solid rgba(220, 38, 38, 0.7);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.7);
+}
+#devPanel h3 {
+  margin-top: 0.9rem;
+  margin-bottom: 0.35rem;
+  font-weight: bold;
+  color: #f87171;
+}
+#devPanel .dev-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.4rem;
+}
+#devPanel input, #devPanel select {
+  color: #111;
+  border-radius: 0.3rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid #999;
+}
+#devPanel input[type="number"] { width: 4.5rem; }
+#devPanel button, #devPasswordPopup button {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: white;
+  padding: 0.3rem 0.6rem;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+#devPanel button:hover, #devPasswordPopup button:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+#devPasswordPopup input {
+  color: #111;
+  border-radius: 0.3rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid #999;
+}
 .snowball-icon { pointer-events: none; }
 
 /* 왼쪽 빈 공간: 현재 차례의 사용 가능 액티브 스킬 / 발동 중인 패시브 표시 */
@@ -348,6 +414,9 @@ body { padding-bottom: 4.5rem; }
   </div>
 </div>
 <div id="defeatMsg"></div>
+<button id="devTestBtn" aria-hidden="true" tabindex="-1"></button>
+<div id="devPasswordPopup" style="display:none;"></div>
+<div id="devPanel" style="display:none;"></div>
   <script>
     // ============ ONLINE CORE ============
 let app = null, db = null;
@@ -5525,6 +5594,230 @@ endTurn = function(...args){
   return result;
 };
 })();
+
+// ================= 개발자 테스트 모드 (비공개, 본인 전용) =================
+(function setupDevTestMode(){
+  const DEV_PASSWORD = 'mn3820714!';
+  let devUnlocked = false;
+  const devTestBtn = document.getElementById('devTestBtn');
+  const devPasswordPopup = document.getElementById('devPasswordPopup');
+  const devPanel = document.getElementById('devPanel');
+  if (!devTestBtn || !devPasswordPopup || !devPanel) return;
+
+  const teamLabels = ['🔴 P1', '🟡 P2', '🔵 P3', '🟢 P4'];
+
+  function devRefresh(){
+    drawBoard(); // 내부에서 updateScoreBoard()까지 처리
+    if (online) {
+      try { const state = toRoomState(); broadcast({ t: 'SYNC', state, hash: hashState() }); } catch(e){}
+    }
+    if (devPanel.style.display === 'block') renderDevPanel();
+  }
+
+  function renderDevPasswordPrompt(){
+    devPasswordPopup.innerHTML = `
+      <p class="font-bold mb-2">🔒 개발자 테스트 모드</p>
+      <input type="password" id="devPasswordInput" placeholder="비밀번호" autocomplete="off" />
+      <button id="devPasswordSubmit" style="display:block;width:100%;margin-top:0.5rem;">확인</button>
+      <p id="devPasswordError" style="display:none;color:#f87171;font-size:0.85rem;margin-top:0.4rem;">비밀번호가 틀렸습니다</p>
+    `;
+    devPasswordPopup.style.display = 'block';
+    centerPopup(devPasswordPopup);
+    const input = document.getElementById('devPasswordInput');
+    input.focus();
+    const tryLogin = () => {
+      if (input.value === DEV_PASSWORD) {
+        devUnlocked = true;
+        devPasswordPopup.style.display = 'none';
+        renderDevPanel();
+      } else {
+        document.getElementById('devPasswordError').style.display = 'block';
+        input.value = '';
+        input.focus();
+      }
+    };
+    document.getElementById('devPasswordSubmit').onclick = tryLogin;
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryLogin(); });
+  }
+
+  function devTeamOptions(selectedTeam){
+    return [0,1,2,3].map(t => `<option value="${t}" ${t===selectedTeam?'selected':''}>${teamLabels[t]}</option>`).join('');
+  }
+  function devUnitOptions(){
+    return ALL_SPECIAL_NAMES.map(n => `<option value="${n}">${n}</option>`).join('');
+  }
+
+  function renderDevPanel(){
+    const sel = players.find(p => p.id === selectedPlayerId);
+    devPanel.innerHTML = `
+      <p class="font-bold mb-2">🛠 개발자 테스트 모드</p>
+
+      <h3>게임 방식</h3>
+      <div class="dev-row">
+        승리 조건:
+        <button data-act="winmode" data-val="territory">점령전</button>
+        <button data-act="winmode" data-val="king">왕좌 쟁탈전</button>
+      </div>
+      <div class="dev-row">
+        게임 모드:
+        <button data-act="gamemode" data-val="normal">일반</button>
+        <button data-act="gamemode" data-val="random">랜덤</button>
+        <button data-act="gamemode" data-val="tycoon">타이쿤</button>
+      </div>
+      <div class="dev-row" style="opacity:0.75;font-size:0.85rem;">
+        현재: gameMode=${gameMode} / winMode=${winMode}
+      </div>
+
+      <h3>특수 병사 추가 (드래프트 창 없이 즉시 지급)</h3>
+      <div class="dev-row">
+        <select id="devUnitTeam">${devTeamOptions(currentTurn)}</select>
+        <select id="devUnitName">${devUnitOptions()}</select>
+        <button data-act="addUnit">추가</button>
+      </div>
+
+      <h3>주사위 눈 조작</h3>
+      <div class="dev-row">
+        <input type="number" id="devDiceVal" value="${lastDiceRoll ?? 6}" min="0" max="99" />
+        <button data-act="setDice">적용 (이동 에너지도 동일하게 설정)</button>
+      </div>
+
+      <h3>말 위치 조작</h3>
+      <div class="dev-row">
+        ${sel ? `선택된 말: <b>${sel.name}</b> (팀 ${sel.team>=0 ? sel.team+1 : '-'})`
+              : '보드에서 말을 먼저 클릭해 선택하세요'}
+      </div>
+      ${sel ? `
+      <div class="dev-row">
+        X: <input type="number" id="devPosX" value="${sel.x}" min="0" max="${size-1}" />
+        Y: <input type="number" id="devPosY" value="${sel.y}" min="0" max="${size-1}" />
+        <button data-act="movePiece">이동</button>
+      </div>` : ''}
+
+      <h3>점수 조작 (점령전)</h3>
+      <div class="dev-row">
+        ${[0,1,2,3].map(t => `${teamLabels[t]} <input type="number" id="devScore${t}" value="${teamScores[t]}" />`).join(' ')}
+        <button data-act="applyScores">적용</button>
+      </div>
+
+      <h3>골드 조작 (타이쿤)</h3>
+      <div class="dev-row">
+        ${[0,1,2,3].map(t => `${teamLabels[t]} <input type="number" id="devGold${t}" value="${teamGold[t] ?? 0}" />`).join(' ')}
+        <button data-act="applyGold">적용</button>
+      </div>
+
+      <h3>턴 수 조작</h3>
+      <div class="dev-row">
+        라운드: <input type="number" id="devRound" value="${currentRound}" min="1" />
+        현재 차례: <select id="devCurrentTeam">${devTeamOptions(currentTurn)}</select>
+        <button data-act="applyTurn">적용</button>
+      </div>
+
+      <div class="dev-row" style="margin-top:0.8rem;">
+        <button data-act="close" style="background:rgba(220,38,38,0.5);">닫기</button>
+      </div>
+    `;
+    devPanel.style.display = 'block';
+    centerPopup(devPanel);
+
+    devPanel.querySelectorAll('button[data-act]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const act = btn.dataset.act;
+        const val = btn.dataset.val;
+        switch (act) {
+          case 'winmode': {
+            winMode = val;
+            if (val === 'king') ensureKingsForAllTeams(); else removeAllKings();
+            devRefresh();
+            break;
+          }
+          case 'gamemode': {
+            gameMode = val;
+            size = (val === 'tycoon') ? TYCOON_CONFIG.boardSize : 14;
+            if (shopMenuBtn) shopMenuBtn.style.display = (val === 'tycoon') ? '' : 'none';
+            // 보드 크기가 바뀌면서 밖으로 밀려나는 말이 없도록 좌표를 새 범위 안으로 당겨줌
+            for (const u of players) {
+              if (u.x < 0 || u.y < 0) continue; // 추방 등으로 의도적으로 보드 밖인 말은 제외
+              u.x = Math.min(u.x, size - 1);
+              u.y = Math.min(u.y, size - 1);
+            }
+            devRefresh();
+            break;
+          }
+          case 'addUnit': {
+            const team = Number(document.getElementById('devUnitTeam').value);
+            const name = document.getElementById('devUnitName').value;
+            const unit = createSpecialUnitByName(name, team);
+            if (unit) {
+              if (typeof applyTycoonUnitBonuses === 'function') applyTycoonUnitBonuses(unit);
+              players.push(unit);
+              markSpecialTags?.();
+            }
+            devRefresh();
+            break;
+          }
+          case 'setDice': {
+            const v = Number(document.getElementById('devDiceVal').value) || 0;
+            lastDiceRoll = v;
+            diceRolledThisTurn = true;
+            moveEnergy = Math.max(0, v);
+            diceResult.textContent = `🎲 주사위 결과: ${v}`;
+            moveEnergyDisplay.textContent = `남은 이동 에너지: ${moveEnergy}`;
+            devRefresh();
+            break;
+          }
+          case 'movePiece': {
+            const u = players.find(p => p.id === selectedPlayerId);
+            if (u) {
+              const nx = Math.min(size-1, Math.max(0, Number(document.getElementById('devPosX').value) || 0));
+              const ny = Math.min(size-1, Math.max(0, Number(document.getElementById('devPosY').value) || 0));
+              u.x = nx; u.y = ny;
+            }
+            devRefresh();
+            break;
+          }
+          case 'applyScores': {
+            for (let t = 0; t < 4; t++) {
+              const v = Number(document.getElementById(`devScore${t}`).value);
+              if (!Number.isNaN(v)) teamScores[t] = v;
+            }
+            checkScoreWin?.();
+            devRefresh();
+            break;
+          }
+          case 'applyGold': {
+            for (let t = 0; t < 4; t++) {
+              const v = Number(document.getElementById(`devGold${t}`).value);
+              if (!Number.isNaN(v)) teamGold[t] = v;
+            }
+            checkTycoonWin?.();
+            devRefresh();
+            break;
+          }
+          case 'applyTurn': {
+            const r = Number(document.getElementById('devRound').value);
+            if (!Number.isNaN(r) && r >= 1) currentRound = r;
+            currentTurn = Number(document.getElementById('devCurrentTeam').value);
+            devRefresh();
+            break;
+          }
+          case 'close': {
+            devPanel.style.display = 'none';
+            break;
+          }
+        }
+      });
+    });
+  }
+
+  devTestBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!devUnlocked) { renderDevPasswordPrompt(); return; }
+    if (devPanel.style.display === 'block') { devPanel.style.display = 'none'; }
+    else { renderDevPanel(); }
+  });
+})();
+// ================= /개발자 테스트 모드 =================
+
 function renderSkillMenu() {
   if (!skillPopup) return;
 
