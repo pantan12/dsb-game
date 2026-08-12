@@ -1065,7 +1065,7 @@ const shopMenuBtn = document.getElementById('shopMenuBtn');
     const snowballs = []; // {x,y}
     const gifts = []; // {x,y}
     const waterPuddles = []; // {x,y} - 샤워기의 '웅덩이 만들기'로 생성되는 물 웅덩이 칸
-    let puppetFragments = []; // {x,y,unitName,isSpecial} - 인형사가 있을 때 유닛 제거 시 생기는 인형 조각
+    let severedThreads = []; // {x,y,unitName,isSpecial} - 인형사가 있을 때 유닛 제거 시 생기는 실 ('끊어진 실' 패시브)
     // ===== 승리 조건: 정가운데 보라색 칸 점수제 =====
     const teamScores = [0, 0, 0, 0];
     let gameEnded = false;
@@ -1158,7 +1158,7 @@ function toRoomState(){
     size,
     players, currentTurn, currentRound,
     moveEnergy, diceRolledThisTurn, lastDiceRoll,
-    snowballs,gifts, puppetFragments,
+    snowballs,gifts, severedThreads,
     ninjaSwap, cartLink, formTrans, keeperChoice,
     puppetSwap: { active: puppetSwap.active, lordId: puppetSwap.lordId, targetId: puppetSwap.targetId },
     castleMove: {
@@ -1217,7 +1217,7 @@ function applyRoomState(s){
   lastDiceRoll = s.lastDiceRoll ?? null;
   selectedPlayerId = null;
   snowballs.splice(0, snowballs.length, ...((s.snowballs)||[]));
-  puppetFragments = (s.puppetFragments) || [];
+  severedThreads = (s.severedThreads) || [];
 
   Object.assign(ninjaSwap, s.ninjaSwap||{active:false,ninjaId:null});
   Object.assign(cartLink, s.cartLink||{active:false,pusherId:null,mateId:null,roundTagged:null});
@@ -1509,7 +1509,7 @@ function pushSnapshot(reason=''){
   players: deepClone(players),
   snowballs: deepClone(snowballs),
   gifts: deepClone(gifts),
-  puppetFragments: deepClone(puppetFragments),
+  severedThreads: deepClone(severedThreads),
   currentTurn, currentRound, moveEnergy, diceRolledThisTurn, lastDiceRoll, selectedPlayerId,
   ninjaSwap: deepClone(ninjaSwap), cartLink: deepClone(cartLink)
 });
@@ -1522,7 +1522,7 @@ function restoreLastSnapshot(){
   players.splice(0, players.length, ...snap.players);
   snowballs.splice(0, snowballs.length, ...snap.snowballs);
   gifts.splice(0, gifts.length, ...(snap.gifts || []));
-  puppetFragments = snap.puppetFragments || [];
+  severedThreads = snap.severedThreads || [];
   currentTurn = snap.currentTurn; 
 currentRound = snap.currentRound;
 moveEnergy = snap.moveEnergy; 
@@ -2326,20 +2326,20 @@ for (let i = 0; i < gifts.length; i++) {
   gift.textContent = '🎁';
   cell.appendChild(gift);
 }
-  // 인형 조각 렌더 (인형사 패시브로 생긴 인형 조각)
-  for (let i = 0; i < puppetFragments.length; i++) {
-    const { x, y } = puppetFragments[i];
+  // 끊어진 실 렌더 (인형사 패시브로 생긴 실)
+  for (let i = 0; i < severedThreads.length; i++) {
+    const { x, y } = severedThreads[i];
     const idx = y * size + x;
     const cell = cells[idx];
     if (!cell) continue;
 
-    const fragment = document.createElement('div');
-    fragment.className = 'absolute inset-0 flex items-center justify-center pointer-events-none';
-    fragment.style.fontSize = '18px';
-    fragment.style.opacity = '0.85';
-    fragment.title = `${puppetFragments[i].unitName}의 인형 조각`;
-    fragment.textContent = '🪆';
-    cell.appendChild(fragment);
+    const thread = document.createElement('div');
+    thread.className = 'absolute inset-0 flex items-center justify-center pointer-events-none';
+    thread.style.fontSize = '18px';
+    thread.style.opacity = '0.85';
+    thread.title = `${severedThreads[i].unitName}의 실`;
+    thread.textContent = '🧵';
+    cell.appendChild(thread);
   }
   installMoveKeyHandler();
   updateBlazeEmberAura();
@@ -2642,7 +2642,7 @@ const pageItems = listing.slice(start, end);
       }
       if (piece.name === '수레꾼') { beginCartLink?.(piece); return; }
       if (piece.name === '인형사') {
-        const marker = puppetFragments.find(s => s.x === piece.x && s.y === piece.y);
+        const marker = severedThreads.find(s => s.x === piece.x && s.y === piece.y);
         if (marker) { performPuppetCrafting?.(piece, marker); return; }
         if ((piece._puppetSwapUses || 0) >= 2) { status && (status.textContent = '인형사: 이번 차례에는 이미 인형 교체를 2회 사용했습니다'); return; }
         beginPuppetSwap?.(piece); return;
@@ -3190,24 +3190,24 @@ function startOfTurnPassives(team){
       checkScoreWin();
       updateScoreBoard();
     }
-    // ✅ 인형사 패시브 ①: 유닛 제거 시 인형 조각 생성
-    // 인형사가 판 위(팀 무관)에 하나라도 있으면, 제거되는 유닛의 인형 조각이 그 자리에 남는다.
+    // ✅ 인형사 패시브 ① '끊어진 실': 유닛이 제거되면 그 유닛을 조종하던 실이 끊어져 그 자리에 남는다.
+    // 인형사가 판 위(팀 무관)에 하나라도 있으면, 제거되는 유닛의 실이 그 자리에 남는다.
     // 성/왕은 제외(진영 파괴/멸망 처리와 얽히므로 대상에서 제외).
-    function spawnPuppetFragmentOnRemoval(p) {
+    function spawnSeveredThreadOnRemoval(p) {
       if (!p || typeof p.x !== 'number' || typeof p.y !== 'number' || p.x < 0 || p.y < 0) return;
       if (p.name === '왕' || (typeof isCastle === 'function' && isCastle(p))) return;
       const lordExists = players.some(u => u.type === 'puppeteer' && u.x >= 0 && u.y >= 0);
       if (!lordExists) return;
       const x = p.x, y = p.y;
-      puppetFragments = puppetFragments.filter(s => !(s.x === x && s.y === y));
-      puppetFragments.push({ x, y, unitName: p.name, isSpecial: isSpecialUnit(p) });
+      severedThreads = severedThreads.filter(s => !(s.x === x && s.y === y));
+      severedThreads.push({ x, y, unitName: p.name, isSpecial: isSpecialUnit(p) });
     }
     // ✅ 인형사 패시브 ②: 인형 제작
-    // 일반 병사의 인형 조각 → 100%, 특수 병사의 인형 조각 → 30% 확률로 그 유닛을 인형사의 팀으로 만든다.
+    // 일반 병사의 실 → 100%, 특수 병사의 실 → 30% 확률로 그 유닛을 인형사의 팀으로 만든다.
     function performPuppetCrafting(lord, marker) {
       pushSnapshot('skill:puppetCraft');
       const mx = marker.x, my = marker.y;
-      puppetFragments = puppetFragments.filter(s => !(s.x === mx && s.y === my));
+      severedThreads = severedThreads.filter(s => !(s.x === mx && s.y === my));
 
       const chance = marker.isSpecial ? 0.30 : 1.0;
       const success = Math.random() < chance;
@@ -3231,9 +3231,9 @@ function startOfTurnPassives(team){
           newUnit = createSpecialUnitByName(marker.unitName, lord.team);
           if (newUnit) { newUnit.x = mx; newUnit.y = my; players.push(newUnit); }
         }
-        msg = `인형 제작 성공! ${marker.unitName}의 인형 조각으로 아군 ${newUnit ? newUnit.name : marker.unitName} 획득`;
+        msg = `인형 제작 성공! ${marker.unitName}의 실로 아군 ${newUnit ? newUnit.name : marker.unitName} 획득`;
       } else {
-        msg = `인형 제작 실패... (${marker.unitName}의 인형 조각이 부서졌습니다)`;
+        msg = `인형 제작 실패... (${marker.unitName}의 실이 끊어져 흩어졌습니다)`;
       }
 
       drawBoard();
@@ -3248,9 +3248,9 @@ function startOfTurnPassives(team){
     function removePlayer(p, suppressMsg = false, isBattleLoss = false) {
   const index = players.indexOf(p);
   if (index === -1) return;
-  // ✅ 인형사 패시브: 전투에서 패배해 제거된 경우에만 그 자리에 인형 조각이 생김
+  // ✅ 인형사 패시브 '끊어진 실': 전투에서 패배해 제거된 경우에만 그 자리에 실이 생김
   // (상인 희생, 항복, 성 철거 등 전투 외 제거는 대상 아님)
-  if (isBattleLoss) spawnPuppetFragmentOnRemoval(p);
+  if (isBattleLoss) spawnSeveredThreadOnRemoval(p);
   players.splice(index, 1);
       if (p.name === '여왕개미') {
   for (let i = players.length - 1; i >= 0; i--) {
@@ -3463,7 +3463,7 @@ function performPuppetSwap() {
 }
 function updatePuppetSwapIndicator() {
   if (!puppetSwapIndicator) return;
-  puppetSwapIndicator.textContent = puppetSwap.active ? '🧵 인형 교체 대상 선택 중' : '';
+  puppetSwapIndicator.textContent = puppetSwap.active ? '🪢 인형 교체 대상 선택 중' : '';
 }
 const formTrans = { picking: false, trancerId: null };
 
@@ -6797,16 +6797,16 @@ if (name === '비숍' && unit.team === currentTurn) {
         }
       });
     }
-    // ⑭ 인형사: 인형 제작 (자신이 서 있는 칸에 인형 조각이 있을 때)
+    // ⑭ 인형사: 인형 제작 (자신이 서 있는 칸에 실이 있을 때)
     if (name === '인형사' && unit.team === currentTurn) {
-      const marker = puppetFragments.find(s => s.x === unit.x && s.y === unit.y);
+      const marker = severedThreads.find(s => s.x === unit.x && s.y === unit.y);
       if (marker) {
         skills.push({
           icon: '🪆',
           unitName: '인형사',
           skillName: '인형 제작',
-          description: `이 칸의 인형 조각(${marker.unitName})으로 인형을 만듭니다. 일반 병사의 조각은 100%, 특수 병사의 조각은 30% 확률로 아군이 됩니다.`,
-          condition: '인형 조각이 있는 칸에서 사용 가능',
+          description: `이 칸의 실(${marker.unitName})로 인형을 만듭니다. 일반 병사의 실은 100%, 특수 병사의 실은 30% 확률로 아군이 됩니다.`,
+          condition: '실이 있는 칸에서 사용 가능',
           available: true,
           execute: () => { performPuppetCrafting(unit, marker); }
         });
@@ -6821,7 +6821,7 @@ if (name === '비숍' && unit.team === currentTurn) {
         p.x >= 0 && p.y >= 0
       );
       skills.push({
-        icon: '🧵',
+        icon: '🪢',
         unitName: '인형사',
         skillName: '인형 교체',
         description: '실 태그를 가진 아군 하나와 자신의 위치를 서로 바꿉니다.',
