@@ -197,6 +197,33 @@ body { padding-bottom: 4.5rem; }
   opacity: 0.5;
   cursor: not-allowed;
 }
+#shopPopup {
+  position: fixed;
+  z-index: 60;  /* skillPopup와 동일 레벨 */
+  max-width: min(90vw, 40rem);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: rgba(180, 83, 9, 0.98);  /* 상점 버튼과 어울리는 황토색 배경 */
+  color: white;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  border: 2px solid rgba(217, 119, 6, 0.8);
+  box-shadow: 0 20px 40px rgba(180, 83, 9, 0.6);
+}
+#shopPopup button {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: white;
+  transition: all 0.2s;
+}
+#shopPopup button:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+#shopPopup button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .snowball-icon { pointer-events: none; }
 
 /* 왼쪽 빈 공간: 현재 차례의 사용 가능 액티브 스킬 / 발동 중인 패시브 표시 */
@@ -248,6 +275,9 @@ body { padding-bottom: 4.5rem; }
     <button id="skillMenuBtn" class="px-2 py-1 rounded bg-purple-600 text-white text-sm">
       스킬창
     </button>
+    <button id="shopMenuBtn" class="px-2 py-1 rounded bg-yellow-600 text-white text-sm" style="display:none">
+      상점
+    </button>
     <button id="evoMenuBtn" class="px-2 py-1 rounded bg-amber-500 text-black text-sm">
   진화창
 </button>
@@ -295,6 +325,7 @@ body { padding-bottom: 4.5rem; }
   <div id="board"></div>
 </div>
 <div id="skillPopup" style="display: none;"></div>
+<div id="shopPopup" style="display: none;"></div>
 <div id="evoPopup" style="display:none;"></div>
 <div class="mt-4 flex items-center justify-center gap-2">
   <p id="status" class="text-xl"></p>
@@ -939,9 +970,11 @@ function handleRemoteSkill(payload){
     const turnDisplay = document.getElementById('turnDisplay');
     const popup = document.getElementById('popup');
 const skillPopup = document.getElementById('skillPopup');  // ★ 추가
+const shopPopup = document.getElementById('shopPopup');
 const evoPopup = document.getElementById('evoPopup');
 const evoMenuBtn = document.getElementById('evoMenuBtn');
 const skillMenuBtn = document.getElementById('skillMenuBtn');  // ★ 추가
+const shopMenuBtn = document.getElementById('shopMenuBtn');
     const justPlacedIds = new Set();
     function markJustPlaced(id){
   try {
@@ -957,7 +990,7 @@ const skillMenuBtn = document.getElementById('skillMenuBtn');  // ★ 추가
     const defeatMsg = document.getElementById('defeatMsg');
     const deselectBtn = document.getElementById('deselectBtn');
     const scoreBoard = document.getElementById('scoreBoard');
-    const size = 14;
+    let size = 14;
     const snowballs = []; // {x,y}
     const gifts = []; // {x,y}
     const waterPuddles = []; // {x,y} - 샤워기의 '웅덩이 만들기'로 생성되는 물 웅덩이 칸
@@ -975,6 +1008,25 @@ const skillMenuBtn = document.getElementById('skillMenuBtn');  // ★ 추가
     // 승리 조건(게임 목표) 모드: 'territory'(점령전, 기존 30점 선취) | 'king'(왕좌 쟁탈전, 왕 제거 시 팀 전멸)
     let winMode = 'territory';
     const winModeSelect = { active: false };
+
+    // ===== 타이쿤 모드: 골드 경제 =====
+    const TYCOON_CONFIG = {
+      boardSize: 13, goldGoal: 300,
+      incomePerSoldierPerTurn: 2, goldPerEnemyKilled: 4,
+      bossIntervalRounds: 10, bossBasePower: 6, bossPowerPerStage: 4,
+      bossBaseReward: 30, bossRewardPerStage: 20,
+      soldierBaseCost: 6, soldierCostPerExisting: 4,
+      randomSpecialCost: 45, chosenSpecialCost: 65,
+      powerBoostBaseCost: 40, powerBoostCostStep: 25, powerBoostAmount: 0.5,
+      moveBoostBaseCost: 40, moveBoostCostStep: 25, moveBoostFactor: 0.75, // 구매마다 이동 소모치가 현재값의 75%로(=25% 감소)
+    };
+    const TYCOON_BOSS_TEAM = -1;
+    let teamGold = [0, 0, 0, 0];
+    let tycoonPowerBonus = [0, 0, 0, 0];   // 상점에서 산 전투력 누적치(신규 유닛에도 적용)
+    let tycoonMoveMult   = [1, 1, 1, 1];   // 상점에서 산 이동 소모 배율(구매마다 ×0.75씩 누적 감소)
+    let tycoonBuys = { soldier: [0,0,0,0], power: [0,0,0,0], move: [0,0,0,0] };
+    let tycoonBossActive = false;
+
     const specialDraft = {
   active: false,
   mode: 'simul',
@@ -1031,6 +1083,7 @@ function toRoomState(){
     status: 'playing',
     version: Date.now(),
     owners, // 팀 소유자 동기화
+    size,
     players, currentTurn, currentRound,
     moveEnergy, diceRolledThisTurn, lastDiceRoll,
     snowballs,gifts,
@@ -1056,6 +1109,7 @@ function toRoomState(){
     },
     modeSelect, gameMode,
     winModeSelect, winMode,
+    teamGold, tycoonPowerBonus, tycoonMoveMult, tycoonBuys, tycoonBossActive,
   };
 }
 function applyRoomState(s){
@@ -1074,6 +1128,7 @@ function applyRoomState(s){
     try { renderTeamSlots?.(); } catch(e){}
   }
 
+  size = s.size ?? size;
   players.splice(0, players.length, ...(s.players||[]));
   currentTurn = s.currentTurn ?? currentTurn;
   currentRound = s.currentRound ?? currentRound;
@@ -1121,6 +1176,15 @@ try {
   gameMode = s.gameMode ?? gameMode;
   Object.assign(winModeSelect, s.winModeSelect ||{active:false});
   winMode = s.winMode ?? winMode;
+
+  if (s.teamGold) teamGold = s.teamGold;
+  if (s.tycoonPowerBonus) tycoonPowerBonus = s.tycoonPowerBonus;
+  if (s.tycoonMoveMult) tycoonMoveMult = s.tycoonMoveMult;
+  if (s.tycoonBuys) tycoonBuys = s.tycoonBuys;
+  if (typeof s.tycoonBossActive === 'boolean') tycoonBossActive = s.tycoonBossActive;
+  if (gameMode === 'tycoon') {
+    shopMenuBtn && (shopMenuBtn.style.display = '');
+  }
 
   diceResult.textContent = diceRolledThisTurn ? `🎲 주사위 결과: ${lastDiceRoll ?? ''}` : '';
   moveEnergyDisplay.textContent = `남은 이동 에너지: ${moveEnergy}`;
@@ -1984,6 +2048,8 @@ function makeOnCellClick(x, y, onCellPlayers) {
 }
     function drawBoard() {
     if (!board) return;
+  board.style.gridTemplateColumns = `repeat(${size}, var(--cell))`;
+  board.style.gridTemplateRows = `repeat(${size}, var(--cell))`;
   board.innerHTML = '';
 
   // popup.dataset.lock이 '1'이면 절대 숨기지 않음
@@ -2231,7 +2297,8 @@ const pageItems = listing.slice(start, end);
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
-      btn.textContent = `${displayName(p)} - 팀 ${p.team + 1} / 전투력: ${formatPowerWithCheer(p)} / 이동능력: ${p.movement} / 사거리: ${p.range}`;
+      const teamLabel = p.team >= 0 ? `팀 ${p.team + 1} / ` : '';
+      btn.textContent = `${displayName(p)} - ${teamLabel}전투력: ${formatPowerWithCheer(p)} / 이동능력: ${p.movement} / 사거리: ${p.range}`;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
 
@@ -2697,6 +2764,30 @@ for (const u of losers) {
         toRemoveIds.delete(u.id); // 제거 면제
       }
     }
+
+    // ===== 타이쿤 모드: 전투 승리 골드 (실제로 제거된 적/보스 유닛 기준) =====
+    if (gameMode === 'tycoon' && winners.length === 1) {
+      const winTeam = winners[0];
+      if (winTeam >= 0 && winTeam <= 3) {
+        let killedEnemyCount = 0;
+        let bossUnit = null;
+        for (const u of losers) {
+          if (!toRemoveIds.has(u.id)) continue; // 구조/전향/닌자 텔레포트 등으로 생존한 경우 제외
+          if (u.team === winTeam) continue;
+          if (u.team === TYCOON_BOSS_TEAM) { bossUnit = u; continue; }
+          if (u.team >= 0 && u.team <= 3) killedEnemyCount++;
+        }
+        if (killedEnemyCount > 0) {
+          teamGold[winTeam] = (teamGold[winTeam] || 0) + killedEnemyCount * TYCOON_CONFIG.goldPerEnemyKilled;
+        }
+        if (bossUnit) {
+          const reward = bossUnit.bossReward ?? TYCOON_CONFIG.bossBaseReward;
+          teamGold[winTeam] = (teamGold[winTeam] || 0) + reward;
+          tycoonBossActive = false;
+          showCenterMessage?.(`💰 보스 처치! 플레이어 ${winTeam + 1} 골드 +${reward}`, 2200);
+        }
+      }
+    }
   }
   // 실제 제거
   if (toRemoveIds.size > 0) {
@@ -2769,6 +2860,11 @@ function startOfTurnPassives(team){
     }
     function updateScoreBoard() {
       if (!scoreBoard) return;
+      // 타이쿤 모드: 점수 대신 골드 보유량을 표시
+      if (gameMode === 'tycoon') {
+        renderTycoonGoldBoard();
+        return;
+      }
       // 왕좌 쟁탈전: 점수제가 아니므로 점수판을 표시하지 않음
       if (winMode === 'king') {
         scoreBoard.style.display = 'none';
@@ -2916,8 +3012,10 @@ function endTurn() {
   }
 }
 
-// 승리 판정: 점령전(가운데 칸 점수 30점 선취) / 왕좌 쟁탈전(마지막 생존 팀)
-if (winMode === 'king') {
+// 승리 판정: 타이쿤(골드 목표량) / 점령전(가운데 칸 점수 30점 선취) / 왕좌 쟁탈전(마지막 생존 팀)
+if (gameMode === 'tycoon') {
+  settleTycoonTurn();
+} else if (winMode === 'king') {
   checkKingWin();
 } else {
   settleCenterScores();
@@ -2940,6 +3038,9 @@ for (let i = 0; i < 4; i++) {
 }
 currentTurn = activeTeams.includes(next) ? next : activeTeams[0];
 if (currentTurn === 0) currentRound++;
+if (gameMode === 'tycoon' && currentRound % TYCOON_CONFIG.bossIntervalRounds === 0) {
+  spawnTycoonBoss();
+}
 
 // 이전 팀의 일회성 상태 리셋(블레이즈 버프, 트럭 플래그 등)
 for (const u of players) {
@@ -3652,7 +3753,8 @@ function isTeamAlive(team) {
 }
 function getAliveTeams() {
   const s = new Set(players.map(p => p.team));
-  return [...s].filter(t => isTeamAlive(t)).sort((a,b)=>a-b);
+  // 타이쿤 모드의 보스(team:-1) 등 0~3 범위 밖의 값은 팀으로 취급하지 않음
+  return [...s].filter(t => t >= 0 && t <= 3 && isTeamAlive(t)).sort((a,b)=>a-b);
 }
 function isTeamActive(team){
   if (!isTeamAlive(team)) return false;       // 기본 생존 조건
@@ -4167,7 +4269,7 @@ function startModeSelection() {
   if (online && myPeerId && __hostId && myPeerId !== __hostId) {
     modeSelect.active = true;
     popup.dataset.lock = '1';
-    popup.innerHTML = '<p class="font-bold mb-2">호스트가 드래프트 모드를 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
+    popup.innerHTML = '<p class="font-bold mb-2">호스트가 게임 방식을 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
     popup.style.left = '50%';
     popup.style.top  = '50%';
     popup.style.transform = 'translate(-50%, -50%)';
@@ -4178,61 +4280,57 @@ function startModeSelection() {
   modeSelect.active = true;
   popup.dataset.lock = '1';  // 추가
 
-  popup.innerHTML = '<p class="font-bold mb-2">드래프트 모드를 선택하세요</p>';
+  popup.innerHTML = '<p class="font-bold mb-2">게임 방식을 선택하세요</p>';
 
-  const normalBtn = document.createElement('button');
-  normalBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-2';
-  normalBtn.textContent = '일반 드래프트 모드';
-  normalBtn.onclick = () => {
-  gameMode = 'normal';
-  popup.style.display = 'none';
-  modeSelect.active = false;
-  // ★ 다음 단계: 승리 조건(점령전 / 왕좌 쟁탈전) 선택
-  startWinModeSelection(() => {
-    askPlayerCountAndCullTeams();
-    initNormalDraft();
-    draftSignals.peersReady.clear(); draftSignals.finalized = false;
-    // ★ 추가: 드래프트 활성 직후 전체 동기화(게스트에게 선택창 표시)
-    if (online) {
-      const state = toRoomState();
-      broadcast({ t: 'SYNC', state, hash: hashState() });
-    }
-  });
-};
-  const randomBtn = document.createElement('button');
-  randomBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
-  randomBtn.textContent = '랜덤 드래프트 모드 (4인 고정)';
-  randomBtn.onclick = () => {
-  gameMode = 'random';
-  modeSelect.active = false;
-  // ★ 다음 단계: 승리 조건(점령전 / 왕좌 쟁탈전) 선택
-  startWinModeSelection(() => {
-    resetTurnToFirstAlive();
-    beginRandomDraft();
+  const territoryBtn = document.createElement('button');
+  territoryBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-2';
+  territoryBtn.textContent = '점령전 (가운데 칸을 점령해 30점을 먼저 모으면 승리)';
+  territoryBtn.onclick = () => {
+    winMode = 'territory';
+    modeSelect.active = false;
+    popup.style.display = 'none';
+    removeAllKings();
+    updateScoreBoard();
+    startDraftModeSelection();
+  };
 
-    // ★ 추가: 랜덤 드래프트 활성 직후 전체 동기화(게스트에게 선택창 표시)
-    if (online) {
-      const state = toRoomState();
-      broadcast({ t: 'SYNC', state, hash: hashState() });
-    }
-  });
-};
-  popup.appendChild(normalBtn);
-  popup.appendChild(randomBtn);
+  const kingBtn = document.createElement('button');
+  kingBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-2';
+  kingBtn.textContent = '왕좌 쟁탈전 (상대 팀의 왕을 제거하면 그 팀은 전멸)';
+  kingBtn.onclick = () => {
+    winMode = 'king';
+    modeSelect.active = false;
+    popup.style.display = 'none';
+    ensureKingsForAllTeams();
+    updateScoreBoard();
+    startDraftModeSelection();
+  };
+
+  const tycoonBtn = document.createElement('button');
+  tycoonBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
+  tycoonBtn.textContent = '타이쿤 모드 (일반 병사 1기로 시작, 골드를 모아 목표량을 먼저 달성하면 승리)';
+  tycoonBtn.onclick = () => {
+    modeSelect.active = false;
+    popup.style.display = 'none';
+    startTycoonMode();
+  };
+
+  popup.appendChild(territoryBtn);
+  popup.appendChild(kingBtn);
+  popup.appendChild(tycoonBtn);
   popup.style.left = '50%';
   popup.style.top  = '50%';
   popup.style.transform = 'translate(-50%, -50%)';
   popup.style.display = 'block';
 }
 
-// ===== 승리 조건(게임 목표) 선택: 드래프트 모드 다음 단계 =====
-// onChosen: 승리 조건이 정해진 뒤 실제로 드래프트를 시작시키는 콜백
-function startWinModeSelection(onChosen) {
+// ===== 드래프트 모드 선택: 점령전/왕좌 쟁탈전을 골랐을 때만 도달하는 다음 단계 =====
+function startDraftModeSelection() {
   // 온라인: 호스트만 선택 가능, 게스트는 대기 화면
   if (online && myPeerId && __hostId && myPeerId !== __hostId) {
     winModeSelect.active = true;
     popup.dataset.lock = '1';
-    popup.innerHTML = '<p class="font-bold mb-2">호스트가 승리 조건을 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
+    popup.innerHTML = '<p class="font-bold mb-2">호스트가 드래프트 모드를 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
     popup.style.left = '50%';
     popup.style.top  = '50%';
     popup.style.transform = 'translate(-50%, -50%)';
@@ -4243,40 +4341,47 @@ function startWinModeSelection(onChosen) {
   winModeSelect.active = true;
   popup.dataset.lock = '1';
 
-  popup.innerHTML = '<p class="font-bold mb-2">승리 조건을 선택하세요</p>';
+  popup.innerHTML = '<p class="font-bold mb-2">드래프트 모드를 선택하세요</p>';
 
-  const territoryBtn = document.createElement('button');
-  territoryBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-2';
-  territoryBtn.textContent = '점령전 (가운데 칸을 점령해 30점을 먼저 모으면 승리)';
-  territoryBtn.onclick = () => {
-    winMode = 'territory';
+  const normalBtn = document.createElement('button');
+  normalBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-2';
+  normalBtn.textContent = '일반 드래프트 모드';
+  normalBtn.onclick = () => {
+    gameMode = 'normal';
     winModeSelect.active = false;
     popup.style.display = 'none';
-    removeAllKings();
-    updateScoreBoard();
-    onChosen();
+    askPlayerCountAndCullTeams();
+    initNormalDraft();
+    draftSignals.peersReady.clear(); draftSignals.finalized = false;
+    // ★ 추가: 드래프트 활성 직후 전체 동기화(게스트에게 선택창 표시)
+    if (online) {
+      const state = toRoomState();
+      broadcast({ t: 'SYNC', state, hash: hashState() });
+    }
   };
-
-  const kingBtn = document.createElement('button');
-  kingBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
-  kingBtn.textContent = '왕좌 쟁탈전 (상대 팀의 왕을 제거하면 그 팀은 전멸)';
-  kingBtn.onclick = () => {
-    winMode = 'king';
+  const randomBtn = document.createElement('button');
+  randomBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
+  randomBtn.textContent = '랜덤 드래프트 모드 (4인 고정)';
+  randomBtn.onclick = () => {
+    gameMode = 'random';
     winModeSelect.active = false;
-    popup.style.display = 'none';
-    ensureKingsForAllTeams();
-    updateScoreBoard();
-    onChosen();
-  };
+    resetTurnToFirstAlive();
+    beginRandomDraft();
 
-  popup.appendChild(territoryBtn);
-  popup.appendChild(kingBtn);
+    // ★ 추가: 랜덤 드래프트 활성 직후 전체 동기화(게스트에게 선택창 표시)
+    if (online) {
+      const state = toRoomState();
+      broadcast({ t: 'SYNC', state, hash: hashState() });
+    }
+  };
+  popup.appendChild(normalBtn);
+  popup.appendChild(randomBtn);
   popup.style.left = '50%';
   popup.style.top  = '50%';
   popup.style.transform = 'translate(-50%, -50%)';
   popup.style.display = 'block';
 
-  // 온라인: 게스트들에게 "승리 조건 선택 중" 대기 화면을 띄우도록 알림
+  // 온라인: 게스트들에게 "드래프트 모드 선택 중" 대기 화면을 띄우도록 알림
   if (online) {
     try { broadcast({ t: 'WINMODE_PROMPT' }); } catch(e){}
   }
@@ -4317,6 +4422,134 @@ function checkKingWin() {
     defeatMsg.style.display = 'block';
   }
 }
+
+// ================= 타이쿤 모드 =================
+// 팀별 보유 '일반 병사' 수(보드 위에 살아있는 것만)
+function getTycoonSoldierCount(team) {
+  return players.filter(p => p.team === team && p.name === '일반 병사').length;
+}
+// 신규 유닛에 그 팀이 상점에서 누적한 전투력/이동 보너스를 적용
+function applyTycoonUnitBonuses(u) {
+  if (gameMode !== 'tycoon' || !u) return u;
+  const t = u.team;
+  u._tyBaseMove = u.movement;
+  u.power = +(( (u.power ?? 0) + (tycoonPowerBonus[t] || 0) )).toFixed(3);
+  u.movement = Math.round(u._tyBaseMove * (tycoonMoveMult[t] ?? 1) * 100) / 100;
+  return u;
+}
+// 이동력 강화 구매 시: 그 팀 보유 유닛 전체의 movement를 새 배율로 재계산
+function reapplyTycoonMoveBonusForTeam(team) {
+  for (const u of players) {
+    if (u.team !== team) continue;
+    if (u._tyBaseMove === undefined) u._tyBaseMove = u.movement;
+    u.movement = Math.round(u._tyBaseMove * (tycoonMoveMult[team] ?? 1) * 100) / 100;
+  }
+}
+// 보스 등장 칸: 13x13 보드의 정중앙(0-based 6,6 = 7번째 칸)
+function getTycoonBossCell() {
+  return { x: Math.floor(size / 2), y: Math.floor(size / 2) };
+}
+function spawnTycoonBoss() {
+  // 남아있는 보스가 있으면(전투 미해결 등) 새로 만들지 않음
+  if (players.some(p => p.team === TYCOON_BOSS_TEAM)) return;
+  const stage = Math.max(1, Math.round(currentRound / TYCOON_CONFIG.bossIntervalRounds));
+  const power = TYCOON_CONFIG.bossBasePower + TYCOON_CONFIG.bossPowerPerStage * (stage - 1);
+  const reward = TYCOON_CONFIG.bossBaseReward + TYCOON_CONFIG.bossRewardPerStage * (stage - 1);
+  const cell = getTycoonBossCell();
+  players.push({
+    id: `boss-${currentRound}-${Date.now()}`,
+    name: '보스', team: TYCOON_BOSS_TEAM, x: cell.x, y: cell.y,
+    color: 'bg-black', power, range: 0, movement: 0, type: 'boss', bossReward: reward
+  });
+  tycoonBossActive = true;
+  showCenterMessage?.(`👹 보스 출현! (전투력 ${power}, 처치 시 골드 +${reward})`, 2500);
+}
+// 턴 종료 정산: 불로소득 지급 → (라운드 갱신 이후) 보스 스폰 체크는 endTurn에서 처리 → 승리 판정
+function settleTycoonTurn() {
+  if (gameEnded) return;
+  const soldiers = getTycoonSoldierCount(currentTurn);
+  if (soldiers > 0) {
+    teamGold[currentTurn] = (teamGold[currentTurn] || 0) + soldiers * TYCOON_CONFIG.incomePerSoldierPerTurn;
+  }
+  updateScoreBoard();
+  checkTycoonWin();
+}
+function checkTycoonWin() {
+  if (gameEnded) return;
+  const winTeam = teamGold.findIndex(g => g >= TYCOON_CONFIG.goldGoal);
+  if (winTeam === -1) return;
+  gameEnded = true;
+  const msg = `🏆 플레이어 ${winTeam + 1} 승리! (골드 ${teamGold[winTeam]} 달성 - 타이쿤 모드)`;
+  status && (status.textContent = msg);
+  if (defeatMsg) {
+    defeatMsg.textContent = msg;
+    defeatMsg.style.display = 'block';
+  }
+}
+function renderTycoonGoldBoard() {
+  if (!scoreBoard) return;
+  scoreBoard.style.display = '';
+  const teamLabels = ['🔴 P1', '🟡 P2', '🔵 P3', '🟢 P4'];
+  const alive = (typeof getActiveTeams === 'function') ? getActiveTeams() : [0,1,2,3];
+  scoreBoard.innerHTML = alive
+    .map(t => `<span>${teamLabels[t]}: ${teamGold[t] || 0} / ${TYCOON_CONFIG.goldGoal} G</span>`)
+    .join('');
+}
+// 타이쿤 모드 시작: gameMode/보드 크기 전환 후 인원수를 묻고 새로 세팅
+function startTycoonMode() {
+  gameMode = 'tycoon';
+  size = TYCOON_CONFIG.boardSize;
+  removeAllKings();
+  if (shopMenuBtn) shopMenuBtn.style.display = '';
+  askTycoonPlayerCountAndSetup();
+}
+function askTycoonPlayerCountAndSetup() {
+  let cnt = 4;
+  if (!online || (myPeerId && __hostId && myPeerId === __hostId)) {
+    let picked = null;
+    while (picked === null) {
+      const input = prompt('플레이어 수를 선택하세요 (2, 3, 4):', '4');
+      if (input === null) { picked = 4; break; }
+      const n = Number(input);
+      if ([2,3,4].includes(n)) { picked = n; break; }
+      alert('2, 3, 4 중 하나를 입력해 주세요.');
+    }
+    cnt = picked;
+  }
+
+  const activeTeams = cnt === 2 ? [0,2] : cnt === 3 ? [0,1,2] : [0,1,2,3];
+
+  players.splice(0, players.length);
+  teamGold = [0,0,0,0];
+  tycoonPowerBonus = [0,0,0,0];
+  tycoonMoveMult = [1,1,1,1];
+  tycoonBuys = { soldier:[0,0,0,0], power:[0,0,0,0], move:[0,0,0,0] };
+  tycoonBossActive = false;
+
+  for (const t of activeTeams) {
+    const corner = getTeamCorner(t);
+    const soldier = {
+      id: `p${t+1}-1`, name: '일반 병사', x: corner.x, y: corner.y,
+      color: colors[t], power: 1, team: t, movement: 1, range: 0
+    };
+    applyTycoonUnitBonuses(soldier);
+    players.push(soldier);
+  }
+
+  popup.style.display = 'none';
+  modeSelect.active = false;
+  resetTurnToFirstAlive();
+  updateScoreBoard();
+  drawBoard();
+  status && (status.textContent = '타이쿤 모드 시작! 골드를 모아 목표량을 달성하세요.');
+
+  if (online) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+  }
+}
+// ================= /타이쿤 모드 =================
+
 const ALL_SPECIAL_NAMES = [
   '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼',
   '의사','좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인',
@@ -4915,7 +5148,7 @@ function onNetMsg(msg){
         } else {
           modeSelect.active = true;
           popup.dataset.lock = '1';
-          popup.innerHTML = '<p class="font-bold mb-2">호스트가 드래프트 모드를 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
+          popup.innerHTML = '<p class="font-bold mb-2">호스트가 게임 방식을 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
           popup.style.left = '50%';
           popup.style.top  = '50%';
           popup.style.transform = 'translate(-50%, -50%)';
@@ -4924,11 +5157,11 @@ function onNetMsg(msg){
         break;
       }
       case 'WINMODE_PROMPT': {
-        // 호스트가 승리 조건(점령전/왕좌 쟁탈전)을 선택 중 — 게스트에게만 대기 화면 표시
+        // 호스트가 드래프트 모드(일반/랜덤)를 선택 중 — 게스트에게만 대기 화면 표시
         if (!(myPeerId && __hostId && myPeerId === __hostId)) {
           winModeSelect.active = true;
           popup.dataset.lock = '1';
-          popup.innerHTML = '<p class="font-bold mb-2">호스트가 승리 조건을 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
+          popup.innerHTML = '<p class="font-bold mb-2">호스트가 드래프트 모드를 선택 중입니다…</p><p class="text-sm opacity-80">잠시만 기다려 주세요.</p>';
           popup.style.left = '50%';
           popup.style.top  = '50%';
           popup.style.transform = 'translate(-50%, -50%)';
@@ -5236,11 +5469,33 @@ onlineModeBtn?.addEventListener('click', ()=>{
   }
 });
   document.addEventListener('click', (e) => {
-    if (skillPopup.style.display === 'block' && 
-        !skillPopup.contains(e.target) && 
+    if (skillPopup.style.display === 'block' &&
+        !skillPopup.contains(e.target) &&
         e.target !== skillMenuBtn) {
       skillPopup.style.display = 'none';
       skillMenuBtn.textContent = '스킬창 보이기';
+    }
+  });
+})();
+// ★ 타이쿤 모드: 상점 토글
+(function setupShopMenu(){
+  if (!shopMenuBtn || !shopPopup) return;
+  shopMenuBtn.addEventListener('click', () => {
+    if (shopPopup.style.display === 'block') {
+      shopPopup.style.display = 'none';
+      shopMenuBtn.textContent = '상점';
+    } else {
+      renderShopMenu();
+      centerPopup(shopPopup);
+      shopMenuBtn.textContent = '상점 닫기';
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (shopPopup.style.display === 'block' &&
+        !shopPopup.contains(e.target) &&
+        e.target !== shopMenuBtn) {
+      shopPopup.style.display = 'none';
+      shopMenuBtn.textContent = '상점';
     }
   });
 })();
@@ -5359,6 +5614,222 @@ if (units.length === 1 && availableSkills.length === 0) {
   // 마지막에 위치만 맞춰준다
   centerPopup(skillPopup);
 }
+
+// ================= 타이쿤 모드: 상점 UI =================
+function tycoonBroadcastSync() {
+  if (online) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+  }
+}
+function addShopItem(title, desc, cost, gold, onBuy, forceDisabled, disabledNote) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'block w-full text-left px-4 py-3 rounded-lg mb-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed';
+  const canAfford = gold >= cost;
+  btn.disabled = !!forceDisabled || !canAfford;
+
+  const header = document.createElement('div');
+  header.className = 'font-bold';
+  header.textContent = title;
+  const d = document.createElement('div');
+  d.className = 'text-sm opacity-80';
+  d.textContent = (forceDisabled && disabledNote) ? disabledNote : desc;
+  btn.appendChild(header);
+  btn.appendChild(d);
+
+  if (!btn.disabled) btn.onclick = onBuy;
+  shopPopup.appendChild(btn);
+}
+function renderShopMenu(sub) {
+  if (!shopPopup) return;
+  shopPopup.style.display = 'block';
+  shopPopup.innerHTML = '';
+
+  if (online && !awaitGetIsMyTurn()) {
+    shopPopup.innerHTML = '<p class="text-center text-lg">내 차례가 아닙니다</p>';
+    centerPopup(shopPopup);
+    return;
+  }
+  if (gameMode !== 'tycoon') {
+    shopPopup.innerHTML = '<p class="text-center text-lg">타이쿤 모드에서만 사용할 수 있습니다</p>';
+    centerPopup(shopPopup);
+    return;
+  }
+
+  const team = currentTurn;
+  const gold = teamGold[team] || 0;
+
+  if (sub === 'choose') {
+    renderShopChooseSpecialSubmenu(team, gold);
+    return;
+  }
+
+  shopPopup.innerHTML = `<h2 class="text-2xl font-bold mb-2 text-center">🏪 상점</h2><p class="text-center mb-4">보유 골드: <b>${gold}</b> G</p>`;
+
+  const ownedSpecials = new Set(players.filter(p => p.team === team).map(p => p.name));
+  const availableSpecials = ALL_SPECIAL_NAMES.filter(n => !ownedSpecials.has(n));
+  const noneLeft = availableSpecials.length === 0;
+
+  const soldierCost = TYCOON_CONFIG.soldierBaseCost + TYCOON_CONFIG.soldierCostPerExisting * (tycoonBuys.soldier[team] || 0);
+  addShopItem(
+    `일반 병사 +1 (${soldierCost} G)`,
+    '상점에서 살 때마다 가격이 오릅니다 (처음 받은 병사 1기는 무료라 가격에 포함되지 않음)',
+    soldierCost, gold, () => buyTycoonSoldier(team)
+  );
+
+  addShopItem(
+    `랜덤 특수 병사 (${TYCOON_CONFIG.randomSpecialCost} G)`,
+    '보유하지 않은 병종 중 무작위로 1기 영입',
+    TYCOON_CONFIG.randomSpecialCost, gold, () => buyTycoonRandomSpecial(team),
+    noneLeft, '이미 모든 특수 병사를 보유 중입니다'
+  );
+
+  addShopItem(
+    `선택 특수 병사 (${TYCOON_CONFIG.chosenSpecialCost} G)`,
+    '원하는 병종을 직접 선택해 1기 영입',
+    TYCOON_CONFIG.chosenSpecialCost, gold, () => renderShopMenu('choose'),
+    noneLeft, '이미 모든 특수 병사를 보유 중입니다'
+  );
+
+  const powerCost = TYCOON_CONFIG.powerBoostBaseCost + TYCOON_CONFIG.powerBoostCostStep * (tycoonBuys.power[team] || 0);
+  addShopItem(
+    `전투력 강화 +0.5 (${powerCost} G)`,
+    '보유한 모든 말의 전투력이 영구히 +0.5 (이후 영입되는 말에도 적용)',
+    powerCost, gold, () => buyTycoonPowerBoost(team)
+  );
+
+  const moveCost = TYCOON_CONFIG.moveBoostBaseCost + TYCOON_CONFIG.moveBoostCostStep * (tycoonBuys.move[team] || 0);
+  addShopItem(
+    `이동력 강화 (${moveCost} G)`,
+    '보유한 모든 말의 이동 소모치 -25% (중첩 가능, 같은 주사위로 더 멀리 이동)',
+    moveCost, gold, () => buyTycoonMoveBoost(team)
+  );
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'block w-full px-4 py-2 rounded-lg mt-4 bg-red-500 hover:bg-red-600';
+  closeBtn.textContent = '닫기';
+  closeBtn.onclick = () => {
+    shopPopup.style.display = 'none';
+    shopMenuBtn.textContent = '상점';
+  };
+  shopPopup.appendChild(closeBtn);
+
+  centerPopup(shopPopup);
+}
+function renderShopChooseSpecialSubmenu(team, gold) {
+  shopPopup.innerHTML = `<h2 class="text-xl font-bold mb-2 text-center">특수 병사 선택 (${TYCOON_CONFIG.chosenSpecialCost} G)</h2><p class="text-center mb-3">보유 골드: <b>${gold}</b> G</p>`;
+
+  const ownedSpecials = new Set(players.filter(p => p.team === team).map(p => p.name));
+  const options = ALL_SPECIAL_NAMES.filter(n => !ownedSpecials.has(n));
+
+  if (options.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'text-center';
+    p.textContent = '선택 가능한 특수 병사가 없습니다';
+    shopPopup.appendChild(p);
+  } else {
+    options.forEach(name => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'block w-full text-left px-3 py-2 rounded mb-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed';
+      btn.textContent = name;
+      btn.disabled = gold < TYCOON_CONFIG.chosenSpecialCost;
+      if (!btn.disabled) btn.onclick = () => buyTycoonChosenSpecial(team, name);
+      shopPopup.appendChild(btn);
+    });
+  }
+
+  const backBtn = document.createElement('button');
+  backBtn.type = 'button';
+  backBtn.className = 'block w-full px-4 py-2 rounded-lg mt-3 bg-gray-600 hover:bg-gray-500';
+  backBtn.textContent = '← 뒤로';
+  backBtn.onclick = () => renderShopMenu();
+  shopPopup.appendChild(backBtn);
+
+  centerPopup(shopPopup);
+}
+function buyTycoonSoldier(team) {
+  const cost = TYCOON_CONFIG.soldierBaseCost + TYCOON_CONFIG.soldierCostPerExisting * (tycoonBuys.soldier[team] || 0);
+  if ((teamGold[team] || 0) < cost) return;
+  teamGold[team] -= cost;
+  const corner = getTeamCorner(team);
+  const soldier = {
+    id: `p${team+1}-s-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+    name: '일반 병사', x: corner.x, y: corner.y,
+    color: colors[team], power: 1, team, movement: 1, range: 0
+  };
+  applyTycoonUnitBonuses(soldier);
+  players.push(soldier);
+  tycoonBuys.soldier[team] = (tycoonBuys.soldier[team] || 0) + 1;
+  status && (status.textContent = '일반 병사를 영입했습니다');
+  drawBoard();
+  renderShopMenu();
+  tycoonBroadcastSync();
+}
+function buyTycoonRandomSpecial(team) {
+  const owned = new Set(players.filter(p => p.team === team).map(p => p.name));
+  const pool = ALL_SPECIAL_NAMES.filter(n => !owned.has(n));
+  if (pool.length === 0) return;
+  if ((teamGold[team] || 0) < TYCOON_CONFIG.randomSpecialCost) return;
+  teamGold[team] -= TYCOON_CONFIG.randomSpecialCost;
+  const name = pool[Math.floor(Math.random() * pool.length)];
+  const unit = createSpecialUnitByName(name, team);
+  if (unit) {
+    applyTycoonUnitBonuses(unit);
+    players.push(unit);
+    markSpecialTags?.();
+  }
+  status && (status.textContent = `${name}을(를) 영입했습니다`);
+  drawBoard();
+  renderShopMenu();
+  tycoonBroadcastSync();
+}
+function buyTycoonChosenSpecial(team, name) {
+  const owned = new Set(players.filter(p => p.team === team).map(p => p.name));
+  if (owned.has(name)) return;
+  if ((teamGold[team] || 0) < TYCOON_CONFIG.chosenSpecialCost) return;
+  teamGold[team] -= TYCOON_CONFIG.chosenSpecialCost;
+  const unit = createSpecialUnitByName(name, team);
+  if (unit) {
+    applyTycoonUnitBonuses(unit);
+    players.push(unit);
+    markSpecialTags?.();
+  }
+  status && (status.textContent = `${name}을(를) 영입했습니다`);
+  drawBoard();
+  renderShopMenu();
+  tycoonBroadcastSync();
+}
+function buyTycoonPowerBoost(team) {
+  const cost = TYCOON_CONFIG.powerBoostBaseCost + TYCOON_CONFIG.powerBoostCostStep * (tycoonBuys.power[team] || 0);
+  if ((teamGold[team] || 0) < cost) return;
+  teamGold[team] -= cost;
+  tycoonPowerBonus[team] = +(((tycoonPowerBonus[team] || 0) + TYCOON_CONFIG.powerBoostAmount)).toFixed(3);
+  for (const u of players) {
+    if (u.team === team) u.power = +(((u.power || 0) + TYCOON_CONFIG.powerBoostAmount)).toFixed(3);
+  }
+  tycoonBuys.power[team] = (tycoonBuys.power[team] || 0) + 1;
+  status && (status.textContent = '전투력이 강화되었습니다 (+0.5)');
+  drawBoard();
+  renderShopMenu();
+  tycoonBroadcastSync();
+}
+function buyTycoonMoveBoost(team) {
+  const cost = TYCOON_CONFIG.moveBoostBaseCost + TYCOON_CONFIG.moveBoostCostStep * (tycoonBuys.move[team] || 0);
+  if ((teamGold[team] || 0) < cost) return;
+  teamGold[team] -= cost;
+  tycoonMoveMult[team] = Math.round((tycoonMoveMult[team] ?? 1) * TYCOON_CONFIG.moveBoostFactor * 100) / 100;
+  reapplyTycoonMoveBonusForTeam(team);
+  tycoonBuys.move[team] = (tycoonBuys.move[team] || 0) + 1;
+  status && (status.textContent = '이동력이 강화되었습니다 (이동 소모 -25%)');
+  drawBoard();
+  renderShopMenu();
+  tycoonBroadcastSync();
+}
+// ================= /타이쿤 모드: 상점 UI =================
+
 function renderEvoMenu(){
   // 온라인에서 내 차례 아니면 표시만
   if (online && !awaitGetIsMyTurn()) {
