@@ -6330,7 +6330,8 @@ function renderCastleMovePicker(castle){
       btn.type = 'button';
       btn.className = 'block w-full text-left px-3 py-2 rounded mb-1';
       btn.textContent = `${picked ? '✓ ' : ''}${displayName(u)} - 전투력:${u.power} / 이동:${u.movement} / 사거리:${u.range}`;
-      btn.onclick = () => {
+      btn.onclick = (e) => {
+        e.stopPropagation(); // 재렌더링으로 이 버튼이 DOM에서 교체되면서 바깥 클릭으로 오인되어 팝업이 닫히는 것을 방지
         if (picked) castleMove.selectedIds.delete(u.id); else castleMove.selectedIds.add(u.id);
         renderCastleMovePicker(castle);
       };
@@ -6343,7 +6344,8 @@ function renderCastleMovePicker(castle){
     confirmBtn.disabled = castleMove.selectedIds.size === 0;
     if (confirmBtn.disabled) confirmBtn.style.opacity = '0.5';
     confirmBtn.textContent = `선택 확인 (${castleMove.selectedIds.size}기 선택됨)`;
-    confirmBtn.onclick = () => {
+    confirmBtn.onclick = (e) => {
+      e.stopPropagation();
       if (castleMove.selectedIds.size === 0) return;
       castleMove.active = false;
       castleMove.pickingTarget = true;
@@ -6362,7 +6364,8 @@ function renderCastleMovePicker(castle){
   cancelBtn.type = 'button';
   cancelBtn.className = 'block w-full px-4 py-2 rounded-lg mt-2 bg-red-500 hover:bg-red-600';
   cancelBtn.textContent = '취소';
-  cancelBtn.onclick = () => {
+  cancelBtn.onclick = (e) => {
+    e.stopPropagation();
     cancelCastleMove();
     skillPopup.style.display = 'none';
     skillMenuBtn.textContent = '스킬창';
