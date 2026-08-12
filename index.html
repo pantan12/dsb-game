@@ -6340,7 +6340,12 @@ if (units.length === 1 && availableSkills.length === 0) {
       if (skill.available) {
         // 왜: 스킬 실행 시 팝업 닫기 및 버튼 라벨 되돌리기
         // (단, 그림자 교환처럼 실행 후에도 skillPopup에서 대상 선택 UI를 계속 보여줘야 하는 스킬은 닫지 않음)
-        btn.onclick = () => {
+        btn.onclick = (e) => {
+          // e.stopPropagation() 필요: 그림자 교환처럼 execute() 내부에서 skillPopup.innerHTML을
+          // 통째로 교체하는 스킬은 클릭된 버튼 자신이 DOM에서 떨어져 나가는데, 이 상태로 클릭
+          // 이벤트가 document까지 버블링되면 "바깥 클릭 시 skillPopup 닫기" 리스너가
+          // skillPopup.contains(e.target)을 false로 판정해 방금 새로 그린 팝업을 바로 닫아버림.
+          e.stopPropagation();
           executeSkill(skill);
           if (!shadowSwap.active) {
             skillPopup.style.display = 'none';
