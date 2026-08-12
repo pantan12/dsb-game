@@ -2145,14 +2145,18 @@ function makeOnCellClick(x, y, onCellPlayers) {
     if (shadowSwap.active && shadowSwap.lordId) {
       const lordObj = players.find(p => p.id === shadowSwap.lordId);
       if (lordObj) {
-        const target = onCellPlayers.find(p =>
+        const candidates = onCellPlayers.filter(p =>
           p.team === lordObj.team && p.id !== lordObj.id &&
           Array.isArray(p.tags) && p.tags.includes('그림자')
         );
-        if (target) {
+        if (candidates.length === 1) {
+          const target = candidates[0];
           shadowSwap.targetId = (shadowSwap.targetId === target.id) ? null : target.id;
           renderShadowSwapPicker(lordObj);
           updateShadowSwapIndicator();
+        } else if (candidates.length > 1) {
+          // 같은 칸에 후보가 여럿이면(이름이 같아 구분 안 될 수 있으므로) 이 칸의 후보만 별도 목록으로 보여줌
+          showShadowSwapCellPicker(lordObj, candidates, x, y);
         } else {
           status && (status.textContent = '그림자 교환: 이 칸에는 대상이 없습니다 (그림자 태그 아군만 선택 가능)');
         }
@@ -2211,6 +2215,25 @@ function makeOnCellClick(x, y, onCellPlayers) {
     );
   }
 
+  // 그림자 교환 발동 중: 클릭 가능한(그림자 태그 아군이 있는) 칸과, 그 중 이미 선택된 칸을 미리 계산
+  let shadowSwapTargetSet = null;
+  let shadowSwapSelectedKey = null;
+  if (shadowSwap.active && shadowSwap.lordId) {
+    const lordObj = players.find(p => p.id === shadowSwap.lordId);
+    if (lordObj) {
+      shadowSwapTargetSet = new Set(
+        players
+          .filter(p => p.team === lordObj.team && p.id !== lordObj.id &&
+                       Array.isArray(p.tags) && p.tags.includes('그림자') && p.x >= 0 && p.y >= 0)
+          .map(p => `${p.x},${p.y}`)
+      );
+      if (shadowSwap.targetId) {
+        const t = players.find(p => p.id === shadowSwap.targetId);
+        if (t) shadowSwapSelectedKey = `${t.x},${t.y}`;
+      }
+    }
+  }
+
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const cell = document.createElement('div');
@@ -2228,6 +2251,14 @@ function makeOnCellClick(x, y, onCellPlayers) {
         castleHint.className = 'absolute inset-0 pointer-events-none';
         castleHint.style.background = 'rgba(251, 191, 36, 0.55)'; // 호박색: 이동 가능한 성
         cell.appendChild(castleHint);
+      }
+
+      if (shadowSwapTargetSet && shadowSwapTargetSet.has(`${x},${y}`)) {
+        const swapHint = document.createElement('div');
+        swapHint.className = 'absolute inset-0 pointer-events-none';
+        const selected = shadowSwapSelectedKey === `${x},${y}`;
+        swapHint.style.background = selected ? 'rgba(168, 85, 247, 0.75)' : 'rgba(168, 85, 247, 0.35)'; // 보라색: 그림자 교환 대상 칸(선택됨/선택 안 됨)
+        cell.appendChild(swapHint);
       }
 
       if (isWaterPuddle(x, y)) {
@@ -3414,7 +3445,7 @@ function renderShadowSwapPicker(lord) {
     const hint = document.createElement('p');
     hint.className = 'text-sm text-center mb-2';
     hint.style.opacity = '0.85';
-    hint.textContent = '위치를 교환할 아군을 선택하세요';
+    hint.textContent = '아래 목록에서 고르거나, 보드에서 보라색으로 표시된 칸(원하는 유닛이 있는 칸)을 직접 클릭하세요';
     skillPopup.appendChild(hint);
 
     targets.forEach(u => {
@@ -3422,7 +3453,8 @@ function renderShadowSwapPicker(lord) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'block w-full text-left px-3 py-2 rounded mb-1';
-      btn.textContent = `${picked ? '✓ ' : ''}${displayName(u)} - 전투력:${u.power} / 이동:${u.movement} / 사거리:${u.range}`;
+      // 같은 이름의 유닛이 여럿이어도 구분할 수 있도록 좌표를 표시
+      btn.textContent = `${picked ? '✓ ' : ''}${displayName(u)} (${u.x},${u.y}) - 전투력:${u.power} / 이동:${u.movement} / 사거리:${u.range}`;
       btn.onclick = (e) => {
         e.stopPropagation();
         shadowSwap.targetId = picked ? null : u.id;
@@ -3459,6 +3491,34 @@ function renderShadowSwapPicker(lord) {
   skillPopup.appendChild(cancelBtn);
 
   centerPopup(skillPopup);
+}
+// 그림자 교환 중 클릭한 칸에 후보(그림자 태그 아군)가 여러 기 겹쳐 있을 때,
+// 이름만으로는 구분이 안 되므로 그 칸의 후보만 따로 목록으로 보여주고 정확히 하나를 고르게 함
+function showShadowSwapCellPicker(lordObj, candidates, x, y) {
+  if (!popup) return;
+  popup.innerHTML = `<p class="font-bold mb-2">(${x},${y}) 칸의 그림자 태그 아군 중 선택</p>`;
+  candidates.forEach(u => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
+    btn.textContent = `${displayName(u)} - 전투력:${u.power} / 이동:${u.movement} / 사거리:${u.range}`;
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      shadowSwap.targetId = (shadowSwap.targetId === u.id) ? null : u.id;
+      popup.style.display = 'none';
+      renderShadowSwapPicker(lordObj);
+      updateShadowSwapIndicator();
+    };
+    popup.appendChild(btn);
+  });
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'block w-full px-4 py-2 rounded-lg mt-2 bg-red-500 hover:bg-red-600';
+  cancelBtn.textContent = '닫기';
+  cancelBtn.onclick = (e) => { e.stopPropagation(); popup.style.display = 'none'; };
+  popup.appendChild(cancelBtn);
+  popup.style.display = 'block';
+  centerPopup(popup);
 }
 function performShadowSwap() {
   if (!shadowSwap.active || !shadowSwap.lordId || !shadowSwap.targetId) return;
