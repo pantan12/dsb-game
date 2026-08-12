@@ -2718,16 +2718,21 @@ function resolveBattles() {
       baseTeamPower.set(u.team, (baseTeamPower.get(u.team) || 0) + (u.power ?? 1));
     }
 
-    // 지원 전투력(칸 외부)
+    // 지원 전투력(칸 외부) — 단, 왕이 있는 칸의 전투는 사거리 지원을 인정하지 않음
+    // (원거리 유닛이 떨어진 곳에서 영구적으로 왕을 방어해주는 것을 막기 위함:
+    //  왕좌 전투는 오직 그 칸에 실제로 들어와 있는 병력끼리만 겨룸)
+    const isKingCell = units.some(u => u.name === '왕');
     const supportTeamPower = new Map();
     for (const t of teamsHere) supportTeamPower.set(t, 0);
-    for (const s of players) {
-      if (typeof isCastle === 'function' && isCastle(s)) continue;
-      if (!teamsHere.includes(s.team)) continue;
-      if (s.x === cx && s.y === cy) continue;
-      const dist = Math.abs(s.x - cx) + Math.abs(s.y - cy);
-      if (dist <= (s.range ?? 0)) {
-        supportTeamPower.set(s.team, (supportTeamPower.get(s.team) || 0) + (s.power ?? 1));
+    if (!isKingCell) {
+      for (const s of players) {
+        if (typeof isCastle === 'function' && isCastle(s)) continue;
+        if (!teamsHere.includes(s.team)) continue;
+        if (s.x === cx && s.y === cy) continue;
+        const dist = Math.abs(s.x - cx) + Math.abs(s.y - cy);
+        if (dist <= (s.range ?? 0)) {
+          supportTeamPower.set(s.team, (supportTeamPower.get(s.team) || 0) + (s.power ?? 1));
+        }
       }
     }
 
@@ -2859,10 +2864,13 @@ for (const u of losers) {
     }
   }
   // 실제 제거
+  // 주의: 왕이 죽으면 removePlayer()가 같은 팀 전체를 연쇄로 함께 제거하기 때문에,
+  // 인덱스를 기준으로 순회하며 지우면 배열이 밀려 범위를 벗어날 수 있다.
+  // 그래서 제거할 대상을 "객체 참조" 목록으로 먼저 스냅샷 떠 둔 뒤(인덱스에 의존하지 않음),
+  // 그 목록을 그대로 순회하며 지운다 — 연쇄 제거로 이미 사라진 대상은 removePlayer가 안전하게 무시한다.
   if (toRemoveIds.size > 0) {
-    for (let i = players.length - 1; i >= 0; i--) {
-      if (toRemoveIds.has(players[i].id)) removePlayer(players[i]);
-    }
+    const toRemove = players.filter(p => toRemoveIds.has(p.id));
+    for (const p of toRemove) removePlayer(p);
   }
 }
     function computeCellCombatStats(x, y) {
@@ -4456,6 +4464,17 @@ function startDraftModeSelection() {
   }
 }
 
+// 왕좌 쟁탈전: 왕의 시작 위치 — 코너에 뭉쳐있는 병력 더미와 떨어진 별도의 "옥좌" 자리
+// (병력 전체를 뚫어야만 왕을 노릴 수 있는 상황을 줄이기 위함. 왕 스스로 이동해 병력과 합류하는 것은 자유)
+function getKingThroneCell(team) {
+  const corner = getTeamCorner(team);
+  const dx = corner.x === 0 ? 3 : -3;
+  const dy = corner.y === 0 ? 3 : -3;
+  return {
+    x: Math.max(0, Math.min(size - 1, corner.x + dx)),
+    y: Math.max(0, Math.min(size - 1, corner.y + dy))
+  };
+}
 // 왕좌 쟁탈전: 각 팀(아직 살아있는=일반 병사가 남아있는 팀)에 왕을 1기씩 배치
 function ensureKingsForAllTeams() {
   for (let t = 0; t < 4; t++) {
@@ -4463,9 +4482,11 @@ function ensureKingsForAllTeams() {
     if (hasKing) continue;
     const seed = players.find(p => p.team === t && p.name === '일반 병사');
     if (!seed) continue; // 이미 제외된 팀
+    const throne = getKingThroneCell(t);
     players.push({
-      id: `p${t + 1}-king`, name: '왕', x: seed.x, y: seed.y,
-      color: seed.color, power: 1, team: t, movement: 1, range: 0
+      // 전투력 2: 잡병 1기가 우연히 들어와도 이기지 못하도록(최소 2기 이상의 진짜 습격조가 필요)
+      id: `p${t + 1}-king`, name: '왕', x: throne.x, y: throne.y,
+      color: seed.color, power: 2, team: t, movement: 1, range: 0
     });
   }
 }
