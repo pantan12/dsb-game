@@ -1156,7 +1156,14 @@ function toRoomState(){
     players, currentTurn, currentRound,
     moveEnergy, diceRolledThisTurn, lastDiceRoll,
     snowballs,gifts,
-    ninjaSwap, cartLink, castleTeleport, formTrans, keeperChoice,
+    ninjaSwap, cartLink, formTrans, keeperChoice,
+    castleMove: {
+      active: castleMove.active,
+      pickingTarget: castleMove.pickingTarget,
+      castleId: castleMove.castleId,
+      team: castleMove.team,
+      selectedIds: Array.from(castleMove.selectedIds || [])
+    },
     specialDraft: {
       active: specialDraft.active,
       mode: specialDraft.mode,
@@ -1209,7 +1216,8 @@ function applyRoomState(s){
 
   Object.assign(ninjaSwap, s.ninjaSwap||{active:false,ninjaId:null});
   Object.assign(cartLink, s.cartLink||{active:false,pusherId:null,mateId:null,roundTagged:null});
-  Object.assign(castleTeleport, s.castleTeleport||{active:false,pieceId:null,team:null,fromXY:null});
+  Object.assign(castleMove, s.castleMove||{active:false,pickingTarget:false,castleId:null,team:null});
+  castleMove.selectedIds = new Set((s.castleMove?.selectedIds)||[]);
   Object.assign(formTrans, s.formTrans||{picking:false,trancerId:null});
   Object.assign(keeperChoice, s.keeperChoice||{active:false,keeperId:null});
 
@@ -2094,6 +2102,17 @@ function makeOnCellClick(x, y, onCellPlayers) {
       drawBoard();
       return;
     }
+    // 성의 스킬(부대 이동) — 목적지 성을 클릭해야 하는 단계
+    if (castleMove.pickingTarget) {
+      const targetCastle = onCellPlayers.find(p => isCastle(p) && p.team === castleMove.team && p.id !== castleMove.castleId);
+      if (targetCastle) {
+        pushSnapshot('skill:castle-move');
+        performCastleMove(targetCastle);
+      } else {
+        status && (status.textContent = '이동시킬 다른 성을 클릭하세요 (P로 취소)');
+      }
+      return;
+    }
     // 현재 선택된 말 ID로 실제 객체를 조회 (undefined 접근 방지)
     const sel = players.find(p => p.id === selectedPlayerId) || null;
 
@@ -2136,6 +2155,16 @@ function makeOnCellClick(x, y, onCellPlayers) {
     }
   }
 
+  // 성의 부대 이동: 목적지로 선택 가능한(자신의, 출발 성이 아닌) 성 칸을 미리 계산
+  let castleTargetSet = null;
+  if (castleMove.pickingTarget) {
+    castleTargetSet = new Set(
+      players
+        .filter(p => isCastle(p) && p.team === castleMove.team && p.id !== castleMove.castleId)
+        .map(p => `${p.x},${p.y}`)
+    );
+  }
+
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const cell = document.createElement('div');
@@ -2146,6 +2175,13 @@ function makeOnCellClick(x, y, onCellPlayers) {
         dashHint.className = 'absolute inset-0 pointer-events-none';
         dashHint.style.background = 'rgba(244, 114, 182, 0.5)'; // 분홍색
         cell.appendChild(dashHint);
+      }
+
+      if (castleTargetSet && castleTargetSet.has(`${x},${y}`)) {
+        const castleHint = document.createElement('div');
+        castleHint.className = 'absolute inset-0 pointer-events-none';
+        castleHint.style.background = 'rgba(251, 191, 36, 0.55)'; // 호박색: 이동 가능한 성
+        cell.appendChild(castleHint);
       }
 
       if (isWaterPuddle(x, y)) {
@@ -2452,11 +2488,11 @@ const pageItems = listing.slice(start, end);
     const piece = players.find(p => p.id === selectedPlayerId);
     if (!piece || piece.team !== currentTurn) return;
 
-    // P/A/Q 기능키
+    // P/Q 기능키
     if (e.key === 'p' || e.key === 'P') {
       if (ninjaSwap?.active) { ninjaSwap.active = false; ninjaSwap.ninjaId = null; }
       if (cartLink?.active) { cancelCartLink(); }
-      if (castleTeleport?.active) { cancelCastleTeleport(); }
+      if (castleMove?.active || castleMove?.pickingTarget) { cancelCastleMove(); drawBoard(); }
       if (isCastle?.(piece)) { removePlayer(piece); popup && (popup.style.display = 'none'); drawBoard(); }
       return;
     }
@@ -2478,13 +2514,6 @@ const pageItems = listing.slice(start, end);
   }
   return;
 }
-    if (e.key === 'a' || e.key === 'A') {
-      if (!isCastle?.(piece)) {
-        const onMyCastle = hasCastleAt?.(piece.team, piece.x, piece.y);
-        if (onMyCastle && getTeamCastles?.(piece.team).length >= 2) beginCastleTeleport(piece);
-      }
-      return;
-    }
     if (e.key === 'q' || e.key === 'Q') {
       if (piece.name === '기자' && currentRound % 5 === 0 && piece._lastGatherRound !== currentRound) {
         const tx = piece.x, ty = piece.y;
@@ -3273,30 +3302,33 @@ function addCastle(team, x, y) {
     power: 0, movement: 0, range: 0, type: 'castle'
   });
 }
-  // ✅ 추가: 성 텔레포트 상태
-const castleTeleport = { active: false, pieceId: null, team: null, fromXY: null };
-function beginCastleTeleport(piece) {
-  castleTeleport.active = true;
-  castleTeleport.pieceId = piece.id;
-  castleTeleport.team = piece.team;
-  castleTeleport.fromXY = { x: piece.x, y: piece.y };
-  status && (status.textContent = '성 텔레포트 대상 성을 선택하세요 (P로 취소)');
+  // ✅ 성의 스킬: 부대 이동 (같은 칸의 아군 여러 기를 선택 → 다른 성으로 이동)
+  // 1단계(active): 스킬창에서 이동시킬 말들을 다중 선택
+  // 2단계(pickingTarget): 보드에서 목적지 성(다른 성)을 클릭
+const castleMove = { active: false, pickingTarget: false, castleId: null, team: null, selectedIds: new Set() };
+function cancelCastleMove() {
+  castleMove.active = false;
+  castleMove.pickingTarget = false;
+  castleMove.castleId = null;
+  castleMove.team = null;
+  castleMove.selectedIds = new Set();
+  status && (status.textContent = '성 부대 이동 취소');
 }
-function cancelCastleTeleport() {
-  castleTeleport.active = false;
-  castleTeleport.pieceId = null;
-  castleTeleport.team = null;
-  castleTeleport.fromXY = null;
-  status && (status.textContent = '성 텔레포트 취소');
-}
-function performCastleTeleport(targetCastle) {
-  const piece = players.find(p => p.id === castleTeleport.pieceId);
-  if (!piece || !isCastle(targetCastle) || targetCastle.team !== castleTeleport.team) return;
-  piece.x = targetCastle.x;
-  piece.y = targetCastle.y;
-  cancelCastleTeleport();
+function performCastleMove(targetCastle) {
+  if (!castleMove.pickingTarget) return;
+  if (!isCastle(targetCastle) || targetCastle.team !== castleMove.team || targetCastle.id === castleMove.castleId) return;
+  for (const id of castleMove.selectedIds) {
+    const u = players.find(p => p.id === id);
+    if (u) { u.x = targetCastle.x; u.y = targetCastle.y; }
+  }
+  const movedCount = castleMove.selectedIds.size;
+  cancelCastleMove();
   popup && (popup.style.display = 'none');
-  drawBoard();
+  drawBoard(); // drawBoard()가 상태 텍스트를 되돌리므로, 결과 메시지는 그 다음에 설정
+  status && (status.textContent = `${movedCount}기를 성으로 이동시켰습니다`);
+  if (online) {
+    try { const state = toRoomState(); broadcast({ t: 'SYNC', state, hash: hashState() }); } catch(e){}
+  }
 }
   const keeperChoice = { active: false, keeperId: null };
 function beginKeeperChoice(piece) {
@@ -5576,7 +5608,7 @@ function roomSkeleton(){
     // 복잡 상태 그대로 저장(1차판)
     ninjaSwap:{active:false,ninjaId:null},
     cartLink:{active:false,pusherId:null,mateId:null,roundTagged:null},
-    castleTeleport:{active:false,pieceId:null,team:null,fromXY:null},
+    castleMove:{active:false,pickingTarget:false,castleId:null,team:null,selectedIds:[]},
     formTrans:{picking:false,trancerId:null},
     keeperChoice:{active:false,keeperId:null},
     specialDraft:{active:false, chosenCount:[0,0,0,0], chosenIds:[], focusId:null, team:0},
@@ -5965,9 +5997,25 @@ function renderSkillMenu() {
     return;
   }
 
+  // 선택된 말이 성이면: 성의 스킬(부대 이동) 전용 화면으로 분기
+  const focused = players.find(p => p.id === selectedPlayerId);
+  if (focused && focused.team === currentTurn && isCastle(focused)) {
+    if (getTeamCastles(focused.team).length < 2) {
+      skillPopup.innerHTML = '<p class="text-center text-lg">부대를 이동시키려면 성이 2개 이상 필요합니다</p>';
+      centerPopup(skillPopup);
+      return;
+    }
+    castleMove.active = true;
+    castleMove.pickingTarget = false;
+    castleMove.castleId = focused.id;
+    castleMove.team = focused.team;
+    castleMove.selectedIds = new Set();
+    renderCastleMovePicker(focused);
+    return;
+  }
+
   // 선택 특수 병사 우선(있으면 그 병사만), 없으면 팀 전체 특수 병사
   let units = players.filter(p => p.team === currentTurn && isSpecialUnit(p));
-  const focused = players.find(p => p.id === selectedPlayerId);
   if (focused && focused.team === currentTurn && isSpecialUnit(focused)) {
     units = [focused];
   }
@@ -6255,6 +6303,76 @@ function buyTycoonMoveBoost(team) {
   tycoonBroadcastSync();
 }
 // ================= /타이쿤 모드: 상점 UI =================
+
+// ================= 성의 스킬: 부대 이동 =================
+function renderCastleMovePicker(castle){
+  if (!skillPopup) return;
+  skillPopup.style.display = 'block';
+  skillPopup.innerHTML = '<h2 class="text-xl font-bold mb-3 text-center">🏰 성: 부대 이동</h2>';
+
+  const mates = players.filter(p => p.team === castle.team && p.x === castle.x && p.y === castle.y && p.id !== castle.id);
+
+  if (mates.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'text-center text-lg';
+    p.textContent = '이 성에는 이동시킬 말이 없습니다';
+    skillPopup.appendChild(p);
+  } else {
+    const hint = document.createElement('p');
+    hint.className = 'text-sm text-center mb-2';
+    hint.style.opacity = '0.85';
+    hint.textContent = '이동시킬 말을 선택하세요 (여러 기 선택 가능)';
+    skillPopup.appendChild(hint);
+
+    mates.forEach(u => {
+      const picked = castleMove.selectedIds.has(u.id);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'block w-full text-left px-3 py-2 rounded mb-1';
+      btn.textContent = `${picked ? '✓ ' : ''}${displayName(u)} - 전투력:${u.power} / 이동:${u.movement} / 사거리:${u.range}`;
+      btn.onclick = () => {
+        if (picked) castleMove.selectedIds.delete(u.id); else castleMove.selectedIds.add(u.id);
+        renderCastleMovePicker(castle);
+      };
+      skillPopup.appendChild(btn);
+    });
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'block w-full px-4 py-2 rounded-lg mt-3 bg-emerald-500 hover:bg-emerald-600';
+    confirmBtn.disabled = castleMove.selectedIds.size === 0;
+    if (confirmBtn.disabled) confirmBtn.style.opacity = '0.5';
+    confirmBtn.textContent = `선택 확인 (${castleMove.selectedIds.size}기 선택됨)`;
+    confirmBtn.onclick = () => {
+      if (castleMove.selectedIds.size === 0) return;
+      castleMove.active = false;
+      castleMove.pickingTarget = true;
+      skillPopup.style.display = 'none';
+      skillMenuBtn.textContent = '스킬창';
+      drawBoard(); // drawBoard()가 상태 텍스트를 "현재 차례: ..."로 되돌리므로, 안내 메시지는 그 다음에 설정
+      status && (status.textContent = '말을 이동시킬 다른 성을 보드에서 클릭하세요 (P로 취소)');
+      if (online) {
+        try { const state = toRoomState(); broadcast({ t: 'SYNC', state, hash: hashState() }); } catch(e){}
+      }
+    };
+    skillPopup.appendChild(confirmBtn);
+  }
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'block w-full px-4 py-2 rounded-lg mt-2 bg-red-500 hover:bg-red-600';
+  cancelBtn.textContent = '취소';
+  cancelBtn.onclick = () => {
+    cancelCastleMove();
+    skillPopup.style.display = 'none';
+    skillMenuBtn.textContent = '스킬창';
+    drawBoard();
+  };
+  skillPopup.appendChild(cancelBtn);
+
+  centerPopup(skillPopup);
+}
+// ================= /성의 스킬: 부대 이동 =================
 
 function renderEvoMenu(){
   // 온라인에서 내 차례 아니면 표시만
