@@ -5654,15 +5654,14 @@ endTurn = function(...args){
 
       <h3>게임 방식</h3>
       <div class="dev-row">
-        승리 조건:
         <button data-act="winmode" data-val="territory">점령전</button>
         <button data-act="winmode" data-val="king">왕좌 쟁탈전</button>
+        <button data-act="gamemode" data-val="tycoon">타이쿤 모드</button>
       </div>
       <div class="dev-row">
-        게임 모드:
+        드래프트 모드 (점령전/왕좌 쟁탈전일 때만 의미 있음):
         <button data-act="gamemode" data-val="normal">일반</button>
         <button data-act="gamemode" data-val="random">랜덤</button>
-        <button data-act="gamemode" data-val="tycoon">타이쿤</button>
       </div>
       <div class="dev-row" style="opacity:0.75;font-size:0.85rem;">
         현재: gameMode=${gameMode} / winMode=${winMode}
@@ -5727,19 +5726,25 @@ endTurn = function(...args){
           case 'winmode': {
             winMode = val;
             if (val === 'king') ensureKingsForAllTeams(); else removeAllKings();
+            // 타이쿤 모드에 있었다면 함께 빠져나옴(점령전/왕좌 쟁탈전과 같은 층위 선택이므로)
+            if (gameMode === 'tycoon') {
+              gameMode = 'normal';
+              const oldSize = size;
+              size = 14;
+              if (shopMenuBtn) shopMenuBtn.style.display = 'none';
+              // 보드 크기가 바뀌면 각 팀 시작 지점(보드 모서리)으로 고정 배치
+              if (size !== oldSize) teleportAllToStartCorners();
+            }
             devRefresh();
             break;
           }
           case 'gamemode': {
+            const oldSize = size;
             gameMode = val;
             size = (val === 'tycoon') ? TYCOON_CONFIG.boardSize : 14;
             if (shopMenuBtn) shopMenuBtn.style.display = (val === 'tycoon') ? '' : 'none';
-            // 보드 크기가 바뀌면서 밖으로 밀려나는 말이 없도록 좌표를 새 범위 안으로 당겨줌
-            for (const u of players) {
-              if (u.x < 0 || u.y < 0) continue; // 추방 등으로 의도적으로 보드 밖인 말은 제외
-              u.x = Math.min(u.x, size - 1);
-              u.y = Math.min(u.y, size - 1);
-            }
+            // 보드 크기가 바뀌면 각 팀 시작 지점(보드 모서리)으로 고정 배치
+            if (size !== oldSize) teleportAllToStartCorners();
             devRefresh();
             break;
           }
