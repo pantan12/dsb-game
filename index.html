@@ -1590,9 +1590,9 @@ for (let t = 0; t < 4; t++) {
       x: pos.x,
       y: pos.y,
       color: getTeamColor(team),
-      power: 2,
+      power: 1,
       movement: 1,
-      range: 2,
+      range: 5,
       type: 'sniper'
     };
     players.push(sniper);
@@ -2389,25 +2389,25 @@ for (let i = 0; i < gifts.length; i++) {
   updateShowerPressureBuff();
   updateHydrophilicPuddleBuff();
 }
-// 샤워기 패시브 '수압 증가': 물 웅덩이 위에 있으면 전:4/사:3, 아니면 기본 전:1/사:1로 복귀
+// 샤워기 패시브 '수압 증가': 물 웅덩이 위 또는 바로 주변 한 칸이면 전:4/사:3, 아니면 기본 전:1/사:1로 복귀
 function updateShowerPressureBuff() {
   for (const u of players) {
     if (u.name !== '샤워기') continue;
-    if (isWaterPuddle(u.x, u.y)) {
+    if (isNearWaterPuddle(u.x, u.y)) {
       u.power = 4; u.range = 3;
     } else {
       u.power = 1; u.range = 1;
     }
   }
 }
-// 친수성 태그 유닛(샤워기 제외) 패시브: 물 웅덩이 위에 있으면 전투력 +2 / 사거리 +1
+// 친수성 태그 유닛(샤워기 제외) 패시브: 물 웅덩이 위 또는 바로 주변 한 칸이면 전투력 +2 / 사거리 +1
 // (샤워기는 절대치 고정 버프라 별도 처리, 여기서는 다른 유닛들의 기존 능력치에 상대적으로 가감)
 function updateHydrophilicPuddleBuff() {
   for (const u of players) {
     if (u.name === '샤워기') continue;
     if (!Array.isArray(u.tags) || !u.tags.includes('친수성')) continue;
     if (typeof u.x !== 'number' || u.x < 0 || u.y < 0) continue;
-    const onPuddle = isWaterPuddle(u.x, u.y);
+    const onPuddle = isNearWaterPuddle(u.x, u.y);
     if (onPuddle && !u._hydroBoosted) {
       u._hydroBoosted = true;
       u.power = (u.power ?? 0) + 2;
@@ -2946,7 +2946,9 @@ function resolveBattles() {
         if (s.x === cx && s.y === cy) continue;
         const dist = Math.abs(s.x - cx) + Math.abs(s.y - cy);
         if (dist <= (s.range ?? 0)) {
-          supportTeamPower.set(s.team, (supportTeamPower.get(s.team) || 0) + (s.power ?? 1));
+          // 저격수 패시브: 전투에 직접 참여하지 않고 사거리로 지원할 때는 전투력이 3
+          const contributedPower = (s.name === '저격수') ? 3 : (s.power ?? 1);
+          supportTeamPower.set(s.team, (supportTeamPower.get(s.team) || 0) + contributedPower);
         }
       }
     }
@@ -3182,11 +3184,11 @@ function startOfTurnPassives(team){
         if (u.name === '엠버' && u._linkedBlazeId) {
           passives.push({ icon: '🔗', text: '엠버: 블레이즈와 연결됨 — 이동 시 블레이즈가 함께 이동' });
         }
-        if (u.name === '샤워기' && typeof isWaterPuddle === 'function' && isWaterPuddle(u.x, u.y)) {
-          passives.push({ icon: '🚿', text: '샤워기: 물 웅덩이 위 — 전투력 4 / 사거리 3' });
+        if (u.name === '샤워기' && typeof isNearWaterPuddle === 'function' && isNearWaterPuddle(u.x, u.y)) {
+          passives.push({ icon: '🚿', text: '샤워기: 물 웅덩이 위/주변 1칸 — 전투력 4 / 사거리 3' });
         }
         if (u.name !== '샤워기' && u._hydroBoosted) {
-          passives.push({ icon: '💧', text: `${displayName(u)}: 물 웅덩이 위 — 전투력 +2 / 사거리 +1 적용 중` });
+          passives.push({ icon: '💧', text: `${displayName(u)}: 물 웅덩이 위/주변 1칸 — 전투력 +2 / 사거리 +1 적용 중` });
         }
         if ((u._cheerBuffVal ?? 0) > 0) {
           passives.push({ icon: '📣', text: `${displayName(u)}: 응원단장 버프 적용 중 (+${u._cheerBuffVal})` });
@@ -3711,6 +3713,10 @@ function performNinjaSwap(target) {
   // 물 웅덩이: '친수성' 태그가 있는 말만 위에 있을 수 있음(샤워기/개구리/고목/범고래/코끼리)
   const HYDROPHILIC_NAMES = new Set(['샤워기', '고목', '개구리', '범고래', '코끼리']);
   function isWaterPuddle(x, y) { return waterPuddles.some(w => w.x === x && w.y === y); }
+  // 물 웅덩이 위 또는 바로 주변 한 칸(맨해튼 거리 1 이내): 친수성 유닛 버프 판정에 사용
+  function isNearWaterPuddle(x, y) {
+    return waterPuddles.some(w => Math.abs(w.x - x) + Math.abs(w.y - y) <= 1);
+  }
   function canStandOnWaterPuddle(unit) {
     return !!unit && Array.isArray(unit.tags) && unit.tags.includes('친수성');
   }
@@ -5024,7 +5030,7 @@ function createSpecialUnitByName(name, team) {
     name, team, x: pos.x, y: pos.y, color: teamColor(team), tags: ['특수 병사']
   };
   switch (name) {
-    case '저격수':   return { ...base, power: 2, range: 2, movement: 1, type: 'sniper' };
+    case '저격수':   return { ...base, power: 1, range: 5, movement: 1, type: 'sniper' };
     case '기자':     return { ...base, power: 1, range: 0, movement: 1, type: 'journalist' };
     case '고목':     return { ...base, power: 1, range: 1, movement: 1, type: 'gomok', _movedThisTurn: false, tags: ['특수 병사', '친수성'] };
     case '사신':     return { ...base, power: 4, range: 4, movement: 4, type: 'reaper' };
@@ -6936,6 +6942,17 @@ if (name === '비숍' && unit.team === currentTurn) {
         condition: `차례당 2회 (남은 ${Math.max(0, usesLeft)}회)`,
         available: usesLeft > 0 && hasTarget,
         execute: () => { beginPuppetSwap(unit); }
+      });
+    }
+    // 저격수: 지원 사격 패시브 (실행 버튼 없이 안내만 표시 — 전투 정산 시 자동 적용)
+    if (name === '저격수') {
+      skills.push({
+        icon: '🎯',
+        unitName: '저격수',
+        skillName: '지원 사격 (패시브)',
+        description: '전투에 직접 참여(같은 칸)할 때는 전투력 1, 사거리 안에서 지원할 때는 전투력 3으로 계산됩니다.',
+        condition: '패시브 — 전투 정산 시 자동 적용',
+        available: false
       });
     }
     // ① 기자: 특종 (5턴마다, 자기 위치로 아군 집결)
