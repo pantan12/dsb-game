@@ -111,7 +111,7 @@ body { padding-bottom: 4.5rem; }
   /* iOS 안전영역 */
   #hudBar { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
   /* ★ 여기에 추가 ↓ */
-  #toggleUiBtn, #skillMenuBtn {
+  #toggleUiBtn, #skillMenuBtn, #turnSkillPanelToggleBtn {
     font-size: 0.75rem;
     padding: 0.25rem 0.5rem;
   }
@@ -340,6 +340,9 @@ body { padding-bottom: 4.5rem; }
     <div id="turnDisplay" class="text-xl font-bold">턴: 1</div>
     <button id="skillMenuBtn" class="px-2 py-1 rounded bg-purple-600 text-white text-sm">
       스킬창
+    </button>
+    <button id="turnSkillPanelToggleBtn" class="px-2 py-1 rounded bg-teal-600 text-white text-sm">
+      스킬표시 끄기
     </button>
     <button id="shopMenuBtn" class="px-2 py-1 rounded bg-yellow-600 text-white text-sm" style="display:none">
       상점
@@ -5924,6 +5927,23 @@ onlineModeBtn?.addEventListener('click', ()=>{
   apply(localStorage.getItem(key) === '1');
   btn.addEventListener('click', () => {
     const hide = !document.body.classList.contains('ui-hidden');
+    localStorage.setItem(key, hide ? '1' : '0');
+    apply(hide);
+  });
+})();
+// ★ 추가: 좌측 상단 "현재 차례 스킬" 표시창 토글 (플레이어1 조작을 가리는 문제 대응)
+(function setupTurnSkillPanelToggle(){
+  const btn = document.getElementById('turnSkillPanelToggleBtn');
+  const panel = document.getElementById('turnSkillPanel');
+  if (!btn || !panel) return;
+  const key = 'turn_skill_panel_hidden';
+  const apply = (hide) => {
+    panel.style.display = hide ? 'none' : '';
+    btn.textContent = hide ? '스킬표시 켜기' : '스킬표시 끄기';
+  };
+  apply(localStorage.getItem(key) === '1');
+  btn.addEventListener('click', () => {
+    const hide = panel.style.display !== 'none';
     localStorage.setItem(key, hide ? '1' : '0');
     apply(hide);
   });
