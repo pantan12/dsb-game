@@ -439,7 +439,8 @@ let roomUnsub = null;
 const teamSlots = document.getElementById('teamSlots');
 const myPeerIdLabel = document.getElementById('myPeerIdLabel');
 const bishopDash = { active: false, unitId: null }; // 비숍 스킬 모드
-const showerPuddlePick = { active: false, showerId: null }; // 샤워기 '웅덩이 만들기' 위치 선택 모드
+const showerPuddlePick = { active: false, showerId: null }; // 샤워기 '웅덩이 만들기' 위치 선택 모드 (진화한 코끼리도 재사용)
+const sniperShot = { active: false, unitId: null }; // 저격수(진화) '저격' 대상 선택 모드
 // 비숍 대각선 질주: 현재 이동 가능한 칸 목록(첫 점유 칸까지 포함, 그 이후는 불가)
 function getBishopDashReachableCells(unit) {
   const cells = [];
@@ -2126,10 +2127,26 @@ function makeOnCellClick(x, y, onCellPlayers) {
       }
       if (blocked) { status && (status.textContent='경로에 말이 있어 그 뒤로는 갈 수 없습니다'); return; }
 
+      // 도착 칸의 점유 상황은 "이동 전" 상태(onCellPlayers)로 판정해야 한다
+      const destOccupants = onCellPlayers.filter(p => !(typeof isCastle === 'function' && isCastle(p)));
+
       // 스냅샷 후 즉시 이동(에너지 소모 없음)
       pushSnapshot('skill:bishop-dash');
       unit.x = x; unit.y = y;
       unit._usedThisTurn = true;
+
+      // ✅ 진화(자객): 대각선 질주로 '혼자 있는' 상대 유닛과 같은 칸에 도착하면 즉시 제거.
+      // 단, 이번 차례에 이 비숍이 이미(질주 전에) 다른 이동을 했다면 발동하지 않음. 왕은 대상에서 제외.
+      if (unit._evolved && !unit._bishopMovedNormallyThisTurn && destOccupants.length === 1) {
+        const lone = destOccupants[0];
+        if (lone.team !== unit.team && lone.name !== '왕') {
+          const loneName = displayName(lone);
+          removePlayer(lone, false, /*spawnsThread=*/true);
+          const msg = `♗ 자객: ${loneName} 즉시 제거!`;
+          status && (status.textContent = msg);
+          showCenterMessage?.(msg, 2000);
+        }
+      }
       drawBoard();
       return;
     }
@@ -2154,6 +2171,52 @@ function makeOnCellClick(x, y, onCellPlayers) {
       shower._usedThisTurn = true;
       status && (status.textContent = '🚿 샤워기 — 웅덩이 만들기 사용!');
       drawBoard();
+      return;
+    }
+    // 저격수(진화): '저격' 대상 칸을 클릭해야 하는 단계
+    if (sniperShot.active) {
+      const sniper = players.find(p => p.id === sniperShot.unitId);
+      sniperShot.active = false;
+      sniperShot.unitId = null;
+      if (!sniper) { drawBoard(); return; }
+      if (sniper.team !== currentTurn) { status && (status.textContent = '자신의 차례가 아닙니다'); return; }
+
+      const dist = Math.abs(sniper.x - x) + Math.abs(sniper.y - y);
+      if (dist > (sniper.range ?? 0)) {
+        status && (status.textContent = '🎯 저격: 사거리 밖입니다');
+        drawBoard();
+        return;
+      }
+      const target = onCellPlayers.find(p =>
+        p.team !== sniper.team && p.name !== '왕' &&
+        !(typeof isCastle === 'function' && isCastle(p))
+      );
+      if (!target) {
+        status && (status.textContent = '🎯 저격: 그 칸에는 저격할 수 있는 적이 없습니다 (왕은 대상이 될 수 없습니다)');
+        drawBoard();
+        return;
+      }
+
+      pushSnapshot('skill:sniper-shot');
+      const chance = Math.min(75, 15 + 10 * (sniper._sniperIdleTurns || 0)) / 100;
+      sniper._usedThisTurn = true;
+      const targetName = displayName(target);
+      const success = Math.random() < chance;
+      if (success) {
+        removePlayer(target, false, /*spawnsThread=*/true);
+        const msg = `🎯 저격 성공! ${targetName} 제거 (성공률 ${Math.round(chance * 100)}%)`;
+        status && (status.textContent = msg);
+        showCenterMessage?.(msg, 2000);
+      } else {
+        const msg = `🎯 저격 실패... (성공률 ${Math.round(chance * 100)}%)`;
+        status && (status.textContent = msg);
+        showCenterMessage?.(msg, 1500);
+      }
+      drawBoard();
+      if (online) {
+        const state = toRoomState();
+        broadcast({ t: 'SYNC', state, hash: hashState() });
+      }
       return;
     }
     // 성의 스킬(부대 이동) — 목적지 성을 클릭해야 하는 단계
@@ -2248,6 +2311,22 @@ function makeOnCellClick(x, y, onCellPlayers) {
     }
   }
 
+  // 저격수(진화) '저격' 발동 중이면 사거리 안의 저격 가능한 적 칸을 미리 계산
+  let sniperTargetSet = null;
+  if (sniperShot.active) {
+    const sniperUnit = players.find(p => p.id === sniperShot.unitId);
+    if (sniperUnit) {
+      sniperTargetSet = new Set(
+        players.filter(p =>
+          p.team !== sniperUnit.team && p.name !== '왕' &&
+          !(typeof isCastle === 'function' && isCastle(p)) &&
+          p.x >= 0 && p.y >= 0 &&
+          (Math.abs(p.x - sniperUnit.x) + Math.abs(p.y - sniperUnit.y)) <= (sniperUnit.range ?? 0)
+        ).map(c => `${c.x},${c.y}`)
+      );
+    }
+  }
+
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const cell = document.createElement('div');
@@ -2279,6 +2358,13 @@ function makeOnCellClick(x, y, onCellPlayers) {
         swapHint.className = 'absolute inset-0 pointer-events-none';
         swapHint.style.background = 'rgba(180, 120, 60, 0.4)'; // 갈색(나무 인형): 인형 교체 대상이 있는 칸
         cell.appendChild(swapHint);
+      }
+
+      if (sniperTargetSet && sniperTargetSet.has(`${x},${y}`)) {
+        const sniperHint = document.createElement('div');
+        sniperHint.className = 'absolute inset-0 pointer-events-none';
+        sniperHint.style.background = 'rgba(239, 68, 68, 0.5)'; // 빨간색: 저격 가능 대상이 있는 칸
+        cell.appendChild(sniperHint);
       }
 
       if (isWaterPuddle(x, y)) {
@@ -2388,6 +2474,7 @@ for (let i = 0; i < gifts.length; i++) {
   updateBlazeEmberAura();
   updateShowerPressureBuff();
   updateHydrophilicPuddleBuff();
+  updatePoisonBuff();
 }
 // 샤워기 패시브 '수압 증가': 물 웅덩이 위 또는 바로 주변 한 칸이면 전:4/사:3, 아니면 기본 전:1/사:1로 복귀
 function updateShowerPressureBuff() {
@@ -2416,6 +2503,28 @@ function updateHydrophilicPuddleBuff() {
       u._hydroBoosted = false;
       u.power = (u.power ?? 0) - 2;
       u.range = (u.range ?? 0) - 1;
+    }
+  }
+}
+// ✅ 개구리(진화: 독화살 개구리) 패시브 '독 제공':
+// 같은 칸에 잠깐이라도 함께 있었던 아군은 '독 제공' 버프를 얻는다.
+// 이 버프를 가진 유닛이 사거리 지원으로 전투에 전투력을 보태는 순간, 그 지원 전투력이 2배가 되고 버프는 사라진다.
+// (버프 지급 자체는 이동/전투와 무관하게 매 렌더마다 같은 칸 여부만 보고 판정 — 실제 소모는 resolveBattles에서 처리)
+function updatePoisonBuff() {
+  const frogsByTeam = new Map();
+  for (const f of players) {
+    if (f.name === '개구리' && f._evolved && f.x >= 0 && f.y >= 0) {
+      if (!frogsByTeam.has(f.team)) frogsByTeam.set(f.team, []);
+      frogsByTeam.get(f.team).push(f);
+    }
+  }
+  if (frogsByTeam.size === 0) return;
+  for (const u of players) {
+    if (u.name === '개구리') continue; // 개구리 자기 자신은 대상 제외
+    const frogs = frogsByTeam.get(u.team);
+    if (!frogs || frogs.length === 0) continue;
+    if (frogs.some(f => f.x === u.x && f.y === u.y)) {
+      u._poisonBuffed = true;
     }
   }
 }
@@ -2896,6 +3005,29 @@ function applyEvolution(u){
       u._evolved = true;
       return true;
 
+    case '저격수':
+      // 기존 스킬/스탯은 그대로, 액티브 스킬 '저격'만 추가. 표시 이름만 부엉이로 바뀜(내부 name은 유지).
+      u._sniperIdleTurns = 0;
+      u._sniperMovedThisTurn = false;
+      return true;
+
+    case '비숍':
+      // 표시 이름만 자객으로 바뀜(내부 name은 유지). 대각선 질주로 혼자 있는 적과 만나면 즉시 제거.
+      u._bishopMovedNormallyThisTurn = false;
+      return true;
+
+    case '사육사':
+    case '코끼리':
+    case '고양이':
+    case '개구리':
+      // 사육사 계열(사육사/코끼리/고양이/개구리)은 모두 같은 유닛이 변신한 것 — 한 번 진화하면
+      // 이후 어떤 형태로 변신해도(performKeeperTransform) 진화 효과가 유지된다.
+      // 지금 마침 고양이 형태라면 즉시 전투력 +0.2 적용(다른 형태는 즉시 적용할 스탯 변화 없음).
+      if (u.name === '고양이') {
+        u.power = +((u.power ?? 1) + 0.2).toFixed(2);
+      }
+      return true;
+
     default:
       status && (status.textContent = `${displayName(u)}는 아직 진화 효과가 등록되지 않았습니다`);
       return false;
@@ -2904,7 +3036,7 @@ function applyEvolution(u){
 function canEvolve(u){
   if (!u || !isSpecialUnit(u) || u._evolved) return false;
   // 실제로 구현된 진화만 허용
-  const implemented = new Set(['광대','고목','닌자','도박사']);
+  const implemented = new Set(['광대','고목','닌자','도박사','저격수','비숍','사육사','코끼리','고양이','개구리']);
   return implemented.has(u.name);
 }
 function resolveBattles() {
@@ -2947,7 +3079,12 @@ function resolveBattles() {
         const dist = Math.abs(s.x - cx) + Math.abs(s.y - cy);
         if (dist <= (s.range ?? 0)) {
           // 저격수 패시브: 전투에 직접 참여하지 않고 사거리로 지원할 때는 전투력이 3
-          const contributedPower = (s.name === '저격수') ? 3 : (s.power ?? 1);
+          let contributedPower = (s.name === '저격수') ? 3 : (s.power ?? 1);
+          // 개구리(진화) 패시브 '독 제공': 버프를 가진 채 지원 전투력을 제공하면 2배, 버프는 즉시 소멸
+          if (s._poisonBuffed) {
+            contributedPower *= 2;
+            s._poisonBuffed = false;
+          }
           supportTeamPower.set(s.team, (supportTeamPower.get(s.team) || 0) + contributedPower);
         }
       }
@@ -3199,6 +3336,13 @@ function startOfTurnPassives(team){
         if (u.name === '고목' && (u.power ?? 0) > 1) {
           passives.push({ icon: '🌳', text: `고목: 성장 — 전투력/사거리 ${u.power}` });
         }
+        if (u.name === '저격수' && u._evolved) {
+          const pct = Math.min(75, 15 + 10 * (u._sniperIdleTurns || 0));
+          passives.push({ icon: '🎯', text: `${displayName(u)}: 저격 성공 확률 ${pct}% (안 움직인 턴 ${u._sniperIdleTurns || 0})` });
+        }
+        if (u._poisonBuffed) {
+          passives.push({ icon: '☠️', text: `${displayName(u)}: 독 제공 효과 적용 중 (다음 지원 전투력 2배)` });
+        }
       }
       return passives;
     }
@@ -3314,12 +3458,15 @@ function startOfTurnPassives(team){
         broadcast({ t: 'SYNC', state, hash: hashState() });
       }
     }
-    function removePlayer(p, suppressMsg = false, isBattleLoss = false) {
+    function removePlayer(p, suppressMsg = false, spawnsThread = false) {
   const index = players.indexOf(p);
   if (index === -1) return;
-  // ✅ 인형사 패시브 '끊어진 실': 전투에서 패배해 제거된 경우에만 그 자리에 실이 생김
-  // (상인 희생, 항복, 성 철거 등 전투 외 제거는 대상 아님)
-  if (isBattleLoss) spawnSeveredThreadOnRemoval(p);
+  // ✅ 인형사 패시브 '끊어진 실': spawnsThread=true로 넘어온 제거에만 그 자리에 실이 생김.
+  // 전투 패배, 저격수의 '저격', 비숍(진화) 대각선 질주의 즉시 제거 등 "전투/스킬로 상대를 없애는" 제거는
+  // 모두 spawnsThread=true로 호출한다 — 앞으로 이런 종류의 제거 스킬이 추가되어도 마찬가지로 true를 넘길 것.
+  // 예외(false로 둠): 상인의 아군 희생, 항복, 왕 사망에 따른 팀 전멸 연쇄 제거, 성 철거 등
+  // '전투/스킬로 상대를 제거'가 아닌 경우. (왕 자신은 spawnSeveredThreadOnRemoval 내부에서도 별도로 제외됨)
+  if (spawnsThread) spawnSeveredThreadOnRemoval(p);
   players.splice(index, 1);
       if (p.name === '여왕개미') {
   for (let i = players.length - 1; i >= 0; i--) {
@@ -3356,6 +3503,7 @@ function endTurn() {
   clearCartLinkForTeam?.(currentTurn);
   if (puppetSwap?.active) { cancelPuppetSwap(); if (skillPopup) skillPopup.style.display = 'none'; if (skillMenuBtn) skillMenuBtn.textContent = '스킬창'; }
   applyGomokEffects(currentTurn);
+  applySniperEffects(currentTurn);
 
   revertFormForTeam(currentTurn);
   for (const u of players) {
@@ -3363,8 +3511,10 @@ function endTurn() {
     if (u.name === '스키퍼') u._usedThisTurn = false;
     if (u.name === '상인') u._usedThisTurn = false;
     if (u.name === '여왕개미') u._usedThisTurn = false;
-    if (u.name === '비숍') u._usedThisTurn = false; // ← 추가
+    if (u.name === '비숍') { u._usedThisTurn = false; u._bishopMovedNormallyThisTurn = false; } // ← 추가
     if (u.name === '샤워기') u._usedThisTurn = false;
+    if (u.name === '저격수') u._usedThisTurn = false;
+    if (u.name === '사육사' || u.name === '코끼리' || u.name === '고양이' || u.name === '개구리') u._usedThisTurn = false;
     if (u.name === '인형사') u._puppetSwapUses = 0;
   }
 }
@@ -3602,6 +3752,16 @@ function tryFormTransform(target) {
     g._hydroBoosted = false;
   }
 }
+// 저격수(진화) '저격' 성공률 갱신: 이번 차례에 안 움직였으면 idle++(성공률 +10%p, 최대 75%), 움직였으면 0(15%로 리셋)
+function applySniperEffects(team){
+  const snipers = players.filter(p => p.team === team && p.name === '저격수' && p._evolved);
+  for (const s of snipers) {
+    if (typeof s._sniperIdleTurns !== 'number') s._sniperIdleTurns = 0;
+    if (s._sniperMovedThisTurn) s._sniperIdleTurns = 0;
+    else s._sniperIdleTurns = Math.min(6, s._sniperIdleTurns + 1); // 15 + 10*6 = 75(상한)
+    s._sniperMovedThisTurn = false;
+  }
+}
   function isCastle(u) { return u && u.name === '성'; }
 function getTeamCastles(team) { return players.filter(p => isCastle(p) && p.team === team); }
 function countCastles(team) { return getTeamCastles(team).length; }
@@ -3650,7 +3810,7 @@ function beginKeeperChoice(piece) {
     const btn = document.createElement('button');
     btn.type='button';
     btn.className='block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
-    btn.textContent = label;
+    btn.textContent = (piece._evolved && EVOLVED_DISPLAY_NAMES[label]) ? `${label} (${EVOLVED_DISPLAY_NAMES[label]}★)` : label;
     btn.onclick = () => performKeeperTransform(label);
     popup.appendChild(btn);
   });
@@ -3682,6 +3842,12 @@ function performKeeperTransform(label) {
   if (!Array.isArray(unit.tags)) unit.tags = [];
   unit.tags = unit.tags.filter(t => t !== '친수성');
   if (label === '개구리' || label === '코끼리') unit.tags.push('친수성');
+
+  // ✅ 진화(사육사 계열): 고양이(칡) 형태일 때 전투력 +0.2. 스킬은 그대로, 스탯만 소폭 강화.
+  if (unit._evolved && label === '고양이') {
+    unit.power = +((unit.power ?? 1) + 0.2).toFixed(2);
+  }
+
   // 변신으로 스탯이 새로 세팅되었으므로, 물 웅덩이 버프는 다음 렌더에서 새로 판정되도록 초기화
   unit._hydroBoosted = false;
 
@@ -5282,9 +5448,20 @@ function pickRandomDraft(name){
 }
 // 팀별 1회 제한
 const evolutionUsed = [false, false, false, false];
+// 진화 시 표시용 이름만 바뀌는 유닛들(내부 name/스킬 판정용 문자열은 절대 바꾸지 않음 — 표시 전용)
+const EVOLVED_DISPLAY_NAMES = {
+  '저격수': '부엉이',
+  '비숍': '자객',
+  '고양이': '칡',
+  '개구리': '독화살 개구리',
+  '코끼리': '물대포'
+};
 // 이름 표시(진화 표식)
 function displayName(u){
   let n = u.name;
+  if (u && u._evolved && EVOLVED_DISPLAY_NAMES[u.name]) {
+    n = EVOLVED_DISPLAY_NAMES[u.name];
+  }
   // 인형사가 판 위에 있는 팀의 말은 실이 연결되어(태그 '실') 이름 뒤에 '인형'을 붙여 표시
   // (내부 name/스킬 판정용 문자열은 그대로 유지 — 표시 전용). 인형사 자기 자신은 제외.
   if (u && u.type !== 'puppeteer' && Array.isArray(u.tags) && u.tags.includes('실') && !n.endsWith(' 인형')) {
@@ -5444,6 +5621,14 @@ if (piece.name === '엠버' && piece._linkedBlazeId) {
 
 if (piece.name === '고목') {
   piece._movedThisTurn = true;
+}
+if (piece.name === '저격수') {
+  // 진화 '저격' 성공률 초기화용: 움직이면 다시 15%로 리셋
+  piece._sniperMovedThisTurn = true;
+}
+if (piece.name === '비숍') {
+  // 진화 즉시제거 조건용: 이번 차례에 이미(정상 이동으로) 움직였는지 기록
+  piece._bishopMovedNormallyThisTurn = true;
 }
 if (piece.name === '트럭 운전사') {
   if (piece._lastMoveDx === dx && piece._lastMoveDy === dy) {
@@ -6881,7 +7066,9 @@ if (name === '비숍' && unit.team === currentTurn) {
     icon: '♗',
     unitName: '비숍',
     skillName: '대각선 질주',
-    description: '이번 차례에 한 번, 대각선으로 몇 칸이든 이동(경로 첫 점유칸 뒤는 불가).',
+    description: unit._evolved
+      ? '이번 차례에 한 번, 대각선으로 몇 칸이든 이동(경로 첫 점유칸 뒤는 불가). 진화: 이동 전 이 차례에 아직 움직인 적이 없다면, 혼자 있는 상대 유닛과 같은 칸에 도착 시 그 유닛을 즉시 제거(왕 제외).'
+      : '이번 차례에 한 번, 대각선으로 몇 칸이든 이동(경로 첫 점유칸 뒤는 불가).',
     condition: '차례당 1회',
     available: !unit._usedThisTurn,
     execute: () => {
@@ -6955,6 +7142,31 @@ if (name === '비숍' && unit.team === currentTurn) {
         available: false
       });
     }
+    // 저격수(진화: 부엉이): 액티브 스킬 '저격'
+    if (name === '저격수' && unit._evolved && unit.team === currentTurn) {
+      const inRangeEnemies = players.filter(p =>
+        p.team !== unit.team && p.name !== '왕' &&
+        !(typeof isCastle === 'function' && isCastle(p)) &&
+        p.x >= 0 && p.y >= 0 &&
+        (Math.abs(p.x - unit.x) + Math.abs(p.y - unit.y)) <= (unit.range ?? 0)
+      );
+      const chancePct = Math.min(75, 15 + 10 * (unit._sniperIdleTurns || 0));
+      const can = (currentRound % 2 === 0) && !unit._usedThisTurn && inRangeEnemies.length > 0;
+      skills.push({
+        icon: '🎯',
+        unitName: '저격수',
+        skillName: '저격',
+        description: `사거리(${unit.range ?? 0}) 안의 적 유닛 하나를 선택해 제거를 시도합니다. 현재 성공 확률: ${chancePct}% (움직이지 않고 턴을 보낼 때마다 +10%p, 최대 75%, 움직이면 15%로 초기화).`,
+        condition: '턴 수가 2의 배수일 때, 차례당 1회',
+        available: can,
+        execute: () => {
+          sniperShot.active = true;
+          sniperShot.unitId = unit.id;
+          if (popup) popup.style.display = 'none';
+          status && (status.textContent = `🎯 저격 대상 선택(성공률 ${chancePct}%): 사거리 안의 적을 클릭하세요`);
+        }
+      });
+    }
     // ① 기자: 특종 (5턴마다, 자기 위치로 아군 집결)
     if (name === '기자') {
       const can = (currentRound % 5 === 0) && (unit._lastGatherRound !== currentRound);
@@ -6989,6 +7201,26 @@ if (name === '비숍' && unit.team === currentTurn) {
         condition: '2턴마다 사용 가능',
         available: can,
         execute: () => { beginKeeperChoice(unit); }
+      });
+    }
+
+    // 코끼리(진화: 물대포): 샤워기의 '웅덩이 만들기'와 동일한 스킬을 획득
+    if (name === '코끼리' && unit._evolved && unit.team === currentTurn) {
+      const puddleCandidates = getShowerPuddleCandidates(unit);
+      const can2 = (currentRound % 3 === 0) && !unit._usedThisTurn && puddleCandidates.length > 0;
+      skills.push({
+        icon: '🚿',
+        unitName: '코끼리',
+        skillName: '웅덩이 만들기',
+        description: "샤워기의 '웅덩이 만들기'와 동일합니다. 거리 2칸 이내의 칸 중, 친수성 태그가 없는 말이 없는 칸을 선택해 '물 웅덩이'로 만듭니다.",
+        condition: '3턴마다 사용 가능',
+        available: can2,
+        execute: () => {
+          showerPuddlePick.active = true;
+          showerPuddlePick.showerId = unit.id;
+          if (popup) popup.style.display = 'none';
+          status && (status.textContent = '웅덩이를 만들 칸을 클릭하세요');
+        }
       });
     }
 
@@ -7219,7 +7451,7 @@ function executeSkill(skill) {
   if (skill.execute) {
     skill.execute();
     // 비숍/인형 교체처럼 후속 클릭·선택을 기다리는 스킬은 자체 안내 문구를 유지시킨다
-    if (!bishopDash.active && !puppetSwap.active && !showerPuddlePick.active) {
+    if (!bishopDash.active && !puppetSwap.active && !showerPuddlePick.active && !sniperShot.active) {
       status && (status.textContent = `${skill.icon} ${skill.unitName} — ${skill.skillName} 사용!`);
     }
     drawBoard?.();
