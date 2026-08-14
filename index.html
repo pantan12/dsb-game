@@ -2488,6 +2488,7 @@ function updateShowerPressureBuff() {
   }
 }
 // 친수성 태그 유닛(샤워기 제외) 패시브: 물 웅덩이 위 또는 바로 주변 한 칸이면 전투력 +2 / 사거리 +1
+// (코끼리는 기본 사거리가 1이므로 이 조건에서 사거리 2가 됨 — 여기서는 다른 유닛과 동일하게 +1만 적용)
 // (샤워기는 절대치 고정 버프라 별도 처리, 여기서는 다른 유닛들의 기존 능력치에 상대적으로 가감)
 function updateHydrophilicPuddleBuff() {
   for (const u of players) {
@@ -3022,9 +3023,9 @@ function applyEvolution(u){
     case '개구리':
       // 사육사 계열(사육사/코끼리/고양이/개구리)은 모두 같은 유닛이 변신한 것 — 한 번 진화하면
       // 이후 어떤 형태로 변신해도(performKeeperTransform) 진화 효과가 유지된다.
-      // 지금 마침 고양이 형태라면 즉시 전투력 +0.2 적용(다른 형태는 즉시 적용할 스탯 변화 없음).
+      // 지금 마침 고양이 형태라면 즉시 전투력 +0.1 적용(다른 형태는 즉시 적용할 스탯 변화 없음).
       if (u.name === '고양이') {
-        u.power = +((u.power ?? 1) + 0.2).toFixed(2);
+        u.power = +((u.power ?? 1) + 0.1).toFixed(2);
       }
       return true;
 
@@ -3826,7 +3827,7 @@ function performKeeperTransform(label) {
   // 변신 스펙(필요시 숫자는 조정 가능)
   const FORM = {
     '사육사': { power: 1, movement: 1, range: 0, type: 'zookeeper' },
-    '코끼리': { power: 3, movement: 2, range: 0, type: 'elephant' },
+    '코끼리': { power: 3, movement: 2, range: 1, type: 'elephant' },
     '고양이': { power: 1, movement: 0.5, range: 1, type: 'cat' },
     '개구리': { power: 0.5, movement: 1, range: 2, type: 'frog' } // 개구리 제어에 range 사용됨
   };
@@ -3843,9 +3844,9 @@ function performKeeperTransform(label) {
   unit.tags = unit.tags.filter(t => t !== '친수성');
   if (label === '개구리' || label === '코끼리') unit.tags.push('친수성');
 
-  // ✅ 진화(사육사 계열): 고양이(칡) 형태일 때 전투력 +0.2. 스킬은 그대로, 스탯만 소폭 강화.
+  // ✅ 진화(사육사 계열): 고양이(삵 아니고 칡) 형태일 때 전투력 +0.1. 스킬은 그대로, 스탯만 소폭 강화.
   if (unit._evolved && label === '고양이') {
-    unit.power = +((unit.power ?? 1) + 0.2).toFixed(2);
+    unit.power = +((unit.power ?? 1) + 0.1).toFixed(2);
   }
 
   // 변신으로 스탯이 새로 세팅되었으므로, 물 웅덩이 버프는 다음 렌더에서 새로 판정되도록 초기화
@@ -5452,7 +5453,7 @@ const evolutionUsed = [false, false, false, false];
 const EVOLVED_DISPLAY_NAMES = {
   '저격수': '고요의 명사수',
   '비숍': '자객',
-  '고양이': '칡',
+  '고양이': '삵 아니고 칡',
   '개구리': '독화살 개구리',
   '코끼리': '물대포'
 };
