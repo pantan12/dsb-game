@@ -3006,7 +3006,7 @@ function applyEvolution(u){
       return true;
 
     case '저격수':
-      // 기존 스킬/스탯은 그대로, 액티브 스킬 '저격'만 추가. 표시 이름만 부엉이로 바뀜(내부 name은 유지).
+      // 기존 스킬/스탯은 그대로, 액티브 스킬 '저격'만 추가. 표시 이름만 '고요의 명사수'로 바뀜(내부 name은 유지).
       u._sniperIdleTurns = 0;
       u._sniperMovedThisTurn = false;
       return true;
@@ -5450,7 +5450,7 @@ function pickRandomDraft(name){
 const evolutionUsed = [false, false, false, false];
 // 진화 시 표시용 이름만 바뀌는 유닛들(내부 name/스킬 판정용 문자열은 절대 바꾸지 않음 — 표시 전용)
 const EVOLVED_DISPLAY_NAMES = {
-  '저격수': '부엉이',
+  '저격수': '고요의 명사수',
   '비숍': '자객',
   '고양이': '칡',
   '개구리': '독화살 개구리',
@@ -7142,7 +7142,7 @@ if (name === '비숍' && unit.team === currentTurn) {
         available: false
       });
     }
-    // 저격수(진화: 부엉이): 액티브 스킬 '저격'
+    // 저격수(진화: 고요의 명사수): 액티브 스킬 '저격'
     if (name === '저격수' && unit._evolved && unit.team === currentTurn) {
       const inRangeEnemies = players.filter(p =>
         p.team !== unit.team && p.name !== '왕' &&
