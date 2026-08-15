@@ -5450,7 +5450,10 @@ function pickRandomDraft(name){
 // 팀별 1회 제한
 const evolutionUsed = [false, false, false, false];
 // 진화해도 이름은 진화 전과 동일하게 표시(★ 표식만 붙음). 내부 name/스킬 판정용 문자열은 절대 바꾸지 않음 — 표시 전용)
-const EVOLVED_DISPLAY_NAMES = {};
+// 도박사만 예외: 진화 시 내부 name이 실제로 '도박꾼'으로 바뀌어(hasGamblerNormal/hasGamblerEvolved 판정용) 여기서 화면 표시만 '도박사'로 되돌림.
+const EVOLVED_DISPLAY_NAMES = {
+  '도박꾼': '도박사'
+};
 // 이름 표시(진화 표식)
 function displayName(u){
   let n = u.name;
