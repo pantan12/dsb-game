@@ -5449,14 +5449,8 @@ function pickRandomDraft(name){
 }
 // 팀별 1회 제한
 const evolutionUsed = [false, false, false, false];
-// 진화 시 표시용 이름만 바뀌는 유닛들(내부 name/스킬 판정용 문자열은 절대 바꾸지 않음 — 표시 전용)
-const EVOLVED_DISPLAY_NAMES = {
-  '저격수': '고요의 명사수',
-  '비숍': '자객',
-  '고양이': '삵 아니고 칡',
-  '개구리': '독화살 개구리',
-  '코끼리': '물대포'
-};
+// 진화해도 이름은 진화 전과 동일하게 표시(★ 표식만 붙음). 내부 name/스킬 판정용 문자열은 절대 바꾸지 않음 — 표시 전용)
+const EVOLVED_DISPLAY_NAMES = {};
 // 이름 표시(진화 표식)
 function displayName(u){
   let n = u.name;
