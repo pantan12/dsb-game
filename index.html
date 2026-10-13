@@ -5246,22 +5246,29 @@ function openTeleportPrompt(team) {
     }
 
     if (teleportStackOpenKey === key) {
-      // 메뉴는 셀의 실제 중심(left/top은 '점'의 좌상단 좌표라 그대로 쓰면 왼쪽으로 쏠림)을 기준으로,
-      // 사각형 범위를 벗어나지 않도록 가로 위치를 고정 너비 기준으로 클램프한다.
+      // 메뉴는 셀의 실제 중심을 기준으로 하되, 사각형 범위(가로/세로 모두)를 절대 벗어나지 않도록
+      // 고정 너비 + 최대 높이(넘치면 내부 스크롤)로 클램프한다. (유닛이 10기 이상 겹쳐도 레이아웃이 안 깨짐)
       const MENU_W = 150;
+      const MENU_MAXH = Math.min(200, SQUARE - 16);
       const cx = ((kx + 0.5) / size) * SQUARE;
       const cy = ((ky + 0.5) / size) * SQUARE;
       const menuLeft = Math.max(4, Math.min(SQUARE - MENU_W - 4, cx - MENU_W / 2));
-      const menuTop = Math.min(SQUARE - 16, cy + dotSize / 2 + 4);
+      const menuTop = Math.max(4, Math.min(SQUARE - MENU_MAXH - 4, cy - MENU_MAXH / 2));
       const menu = document.createElement('div');
       Object.assign(menu.style, {
-        position: 'absolute', left: `${menuLeft}px`, top: `${menuTop}px`, width: `${MENU_W}px`,
+        position: 'absolute', left: `${menuLeft}px`, top: `${menuTop}px`,
+        width: `${MENU_W}px`, maxHeight: `${MENU_MAXH}px`, overflowY: 'auto',
         background: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '4px',
         boxShadow: '0 4px 10px rgba(0,0,0,0.25)', zIndex: '20', fontSize: '11px', whiteSpace: 'normal'
       });
+      // 같은 이름이 여러 기면 구분할 수 있게 번호를 붙임(겹친 칸은 좌표가 전부 같아 의미 없으므로 좌표 생략)
+      const nameTotal = {};
+      group.forEach(u => { nameTotal[u.name] = (nameTotal[u.name] || 0) + 1; });
+      const nameSeen = {};
       group.forEach(u => {
+        nameSeen[u.name] = (nameSeen[u.name] || 0) + 1;
         const item = document.createElement('div');
-        item.textContent = `${u.name} (${u.x + 1},${u.y + 1})`;
+        item.textContent = nameTotal[u.name] > 1 ? `${u.name} #${nameSeen[u.name]}` : u.name;
         Object.assign(item.style, { padding: '3px 8px', cursor: 'pointer', borderRadius: '4px' });
         item.onmouseenter = () => item.style.background = '#e5e7eb';
         item.onmouseleave = () => item.style.background = '';
