@@ -1138,6 +1138,9 @@ const deploy = {
 const teleportPick = { active: false, team: null, unitId: null };
 // 왕좌 쟁탈전: 텔레포트 팝업에서 드래그로 임시 배정해둔 유닛(확인 누르기 전) — 로컬 전용, 동기화 안 함
 let teleportStaged = {}; // unitId -> targetTeam(0~3)
+// 왕좌 쟁탈전: 텔레포트 팝업에서 한 칸에 유닛이 여러 기 겹쳐 있을 때 "고르는 중"인 칸 / 이미 고른 유닛 — 로컬 전용
+let teleportStackOpenKey = null;     // "x,y" 또는 null
+let teleportArmedUnitByKey = {};     // "x,y" -> unitId
 // 왕좌 쟁탈전: 보드 뷰(줌) 상태 — 클라이언트 로컬 UI 전용, 절대 toRoomState에 포함하지 않음
 let boardViewZone = 'MAIN'; // 'MAIN' | 0 | 1 | 2 | 3
 // ===== 온라인: 현재 게임상태 → 문서 / 문서 → 게임상태 =====
@@ -5070,13 +5073,9 @@ function startDraftModeSelection() {
 // 왕좌 쟁탈전: 왕의 시작 위치 — 코너에 뭉쳐있는 병력 더미와 떨어진 별도의 "옥좌" 자리
 // (병력 전체를 뚫어야만 왕을 노릴 수 있는 상황을 줄이기 위함. 왕 스스로 이동해 병력과 합류하는 것은 자유)
 function getKingThroneCell(team) {
-  const corner = getTeamCorner(team);
-  const dx = corner.x === 0 ? 3 : -3;
-  const dy = corner.y === 0 ? 3 : -3;
-  return {
-    x: Math.max(0, Math.min(size - 1, corner.x + dx)),
-    y: Math.max(0, Math.min(size - 1, corner.y + dy))
-  };
+  // 왕좌 쟁탈전 4분할: 왕은 각 구역의 가장 바깥 구석(코너)에서 시작
+  // (구석 반대쪽의 정중앙 칸은 다른 팀이 텔레포트해 들어오는 스폰 지점)
+  return getTeamCorner(team);
 }
 // 왕좌 쟁탈전 4분할: 각 팀의 7x7 구역 범위(각 팀 코너 기준, getTeamCorner와 동일한 규칙)
 function getTeamQuadrant(team) {
@@ -5093,6 +5092,13 @@ function getZoneSpawnCell(team) {
 // 위 스폰 칸 4개는 영구적으로 전투 면역(resolveBattles에서 사용)
 const ZONE_SAFE_SET = new Set([0, 1, 2, 3].map(t => { const c = getZoneSpawnCell(t); return `${c.x},${c.y}`; }));
 const ZONE_LABELS = ['1P', '2P', '3P', '4P'];
+// 각 팀 코너 색(getCornerColor와 동일한 배색)에 맞춘 텔레포트 팝업 구역 박스 테마
+const ZONE_BOX_THEME = [
+  { bg: '#fef2f2', border: '#ef4444', text: '#b91c1c' }, // 1P: 빨강
+  { bg: '#fefce8', border: '#eab308', text: '#a16207' }, // 2P: 노랑
+  { bg: '#eff6ff', border: '#3b82f6', text: '#1d4ed8' }, // 3P: 파랑
+  { bg: '#f0fdf4', border: '#22c55e', text: '#15803d' }, // 4P: 초록
+];
 
 // 왕좌 쟁탈전 4분할: team의 턴이 시작될 때 텔레포트 잠금 해제 + 선택 팝업 오픈(배치 완료 직후의 첫 턴 포함)
 function maybeStartTeleportPhase(team) {
@@ -5104,6 +5110,8 @@ function maybeStartTeleportPhase(team) {
   teleportPick.team = team;
   teleportPick.unitId = null;
   teleportStaged = {};
+  teleportStackOpenKey = null;
+  teleportArmedUnitByKey = {};
 }
 
 // 왕좌 쟁탈전 4분할: 구역 탭 바(MAIN/1P/2P/3P/4P) 렌더링 — king 모드에서만 보임
@@ -5130,13 +5138,24 @@ function openTeleportPrompt(team) {
   if (online && myPeerId && owners?.[String(team)] && owners[String(team)] !== myPeerId) return;
 
   popup.dataset.lock = '1';
-  popup.style.maxWidth = 'min(95vw, 30rem)';
+  popup.style.maxWidth = 'min(95vw, 32rem)';
+  popup.style.padding = '14px 16px 16px';
   popup.innerHTML = '';
 
+  const header = document.createElement('div');
+  header.style.marginBottom = '10px';
   const title = document.createElement('p');
-  title.className = 'font-bold mb-2';
-  title.textContent = '텔레포트: 보낼 유닛을 오른쪽 구역으로 드래그하세요';
-  popup.appendChild(title);
+  title.style.fontWeight = '800';
+  title.style.fontSize = '15px';
+  title.style.margin = '0 0 2px';
+  title.textContent = `🚀 ${ZONE_LABELS[team]} 턴: 텔레포트`;
+  const sub = document.createElement('p');
+  sub.style.fontSize = '11px';
+  sub.style.color = '#6b7280';
+  sub.style.margin = '0';
+  sub.textContent = '겹친 칸은 숫자를 눌러 하나를 고른 뒤 드래그하세요. 다 고르면 확인!';
+  header.appendChild(title); header.appendChild(sub);
+  popup.appendChild(header);
 
   const SQUARE = Math.round(Math.max(180, Math.min(300, window.innerWidth * 0.5)));
   const BOXW = Math.round(Math.max(80, Math.min(130, window.innerWidth * 0.22)));
@@ -5151,36 +5170,118 @@ function openTeleportPrompt(team) {
   square.style.position = 'relative';
   square.style.width = SQUARE + 'px';
   square.style.height = SQUARE + 'px';
-  square.style.border = '2px solid #333';
-  square.style.borderRadius = '6px';
-  square.style.background = '#f3f4f6';
+  square.style.border = '2px solid #cbd5e1';
+  square.style.borderRadius = '10px';
+  square.style.background = 'linear-gradient(135deg,#f8fafc,#eef2f7)';
+  square.style.boxShadow = 'inset 0 0 0 1px rgba(255,255,255,0.6)';
   square.style.flex = '0 0 auto';
-  square.ondragover = (e) => e.preventDefault();
+  square.ondragover = (e) => { e.preventDefault(); square.style.borderColor = '#94a3b8'; };
+  square.ondragleave = () => { square.style.borderColor = '#cbd5e1'; };
   square.ondrop = (e) => {
     e.preventDefault();
+    square.style.borderColor = '#cbd5e1';
     const unitId = e.dataTransfer.getData('text/plain');
     delete teleportStaged[unitId];
     openTeleportPrompt(team);
   };
+  square.onclick = () => {
+    if (teleportStackOpenKey) { teleportStackOpenKey = null; openTeleportPrompt(team); }
+  };
 
   const myUnits = players.filter(p => p.team === team && p.x >= 0 && p.y >= 0 && !isCastle(p) && !p._teleportLockThisTurn && teleportStaged[p.id] === undefined);
+  const groups = new Map(); // "x,y" -> units[]
   myUnits.forEach(u => {
+    const key = `${u.x},${u.y}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(u);
+  });
+
+  const dotSize = 24;
+  const posOf = (x, y) => ({
+    left: ((x + 0.5) / size) * SQUARE - dotSize / 2,
+    top: ((y + 0.5) / size) * SQUARE - dotSize / 2
+  });
+
+  const makeDraggableDot = (u, onReopen) => {
     const dot = document.createElement('div');
     dot.draggable = true;
     dot.title = `${u.name} (${u.x + 1},${u.y + 1})`;
     dot.textContent = u.name.slice(0, 1);
     dot.className = `${u.color} absolute flex items-center justify-center select-none`;
-    const dotSize = 22;
-    dot.style.width = dotSize + 'px';
-    dot.style.height = dotSize + 'px';
-    dot.style.left = `${((u.x + 0.5) / size) * SQUARE - dotSize / 2}px`;
-    dot.style.top = `${((u.y + 0.5) / size) * SQUARE - dotSize / 2}px`;
-    dot.style.borderRadius = '50%';
-    dot.style.fontSize = '11px';
-    dot.style.cursor = 'grab';
-    dot.style.border = '1px solid rgba(0,0,0,0.4)';
-    dot.ondragstart = (e) => { e.dataTransfer.setData('text/plain', u.id); };
-    square.appendChild(dot);
+    const { left, top } = posOf(u.x, u.y);
+    Object.assign(dot.style, {
+      width: dotSize + 'px', height: dotSize + 'px',
+      left: left + 'px', top: top + 'px',
+      borderRadius: '50%', fontSize: '11px', fontWeight: '700',
+      cursor: 'grab', color: '#fff',
+      border: '2px solid rgba(255,255,255,0.85)',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.35)',
+      zIndex: '5'
+    });
+    dot.ondragstart = (e) => { e.dataTransfer.setData('text/plain', u.id); dot.style.opacity = '0.4'; };
+    dot.ondragend = () => { dot.style.opacity = '1'; };
+    if (onReopen) {
+      dot.onclick = (e) => { e.stopPropagation(); onReopen(); };
+    }
+    return dot;
+  };
+
+  groups.forEach((group, key) => {
+    if (group.length === 1) {
+      square.appendChild(makeDraggableDot(group[0], null));
+      return;
+    }
+    const [kx, ky] = key.split(',').map(Number);
+    const { left, top } = posOf(kx, ky);
+    const armedId = teleportArmedUnitByKey[key];
+    const armedUnit = armedId ? group.find(g => g.id === armedId) : null;
+
+    if (armedUnit) {
+      const dot = makeDraggableDot(armedUnit, () => {
+        teleportStackOpenKey = key; teleportArmedUnitByKey[key] = undefined; openTeleportPrompt(team);
+      });
+      dot.title += ' — 클릭하면 다시 고르기';
+      square.appendChild(dot);
+      return;
+    }
+
+    if (teleportStackOpenKey === key) {
+      const menu = document.createElement('div');
+      Object.assign(menu.style, {
+        position: 'absolute', left: `${left}px`, top: `${top}px`, transform: 'translate(-50%, 4px)',
+        background: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '4px',
+        boxShadow: '0 4px 10px rgba(0,0,0,0.25)', zIndex: '20', fontSize: '11px', whiteSpace: 'nowrap'
+      });
+      group.forEach(u => {
+        const item = document.createElement('div');
+        item.textContent = `${u.name} (${u.x + 1},${u.y + 1})`;
+        Object.assign(item.style, { padding: '3px 8px', cursor: 'pointer', borderRadius: '4px' });
+        item.onmouseenter = () => item.style.background = '#e5e7eb';
+        item.onmouseleave = () => item.style.background = '';
+        item.onclick = (e) => {
+          e.stopPropagation();
+          teleportArmedUnitByKey[key] = u.id;
+          teleportStackOpenKey = null;
+          openTeleportPrompt(team);
+        };
+        menu.appendChild(item);
+      });
+      square.appendChild(menu);
+    } else {
+      const marker = document.createElement('div');
+      marker.className = `${group[0].color} absolute flex items-center justify-center select-none`;
+      Object.assign(marker.style, {
+        width: dotSize + 'px', height: dotSize + 'px',
+        left: left + 'px', top: top + 'px',
+        borderRadius: '50%', fontSize: '12px', fontWeight: '800', color: '#fff',
+        border: '2px dashed rgba(255,255,255,0.9)',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.35)', cursor: 'pointer', zIndex: '5'
+      });
+      marker.title = `${group.length}기 겹침 — 눌러서 고르기`;
+      marker.textContent = String(group.length);
+      marker.onclick = (e) => { e.stopPropagation(); teleportStackOpenKey = key; openTeleportPrompt(team); };
+      square.appendChild(marker);
+    }
   });
 
   // 오른쪽 1~4구역 칸 4개(위에서부터 1P~4P), 사각형과 높이가 정확히 맞도록 flex로 배분
@@ -5193,11 +5294,12 @@ function openTeleportPrompt(team) {
   col.style.flex = '0 0 auto';
 
   [0, 1, 2, 3].forEach((t, i) => {
+    const theme = ZONE_BOX_THEME[t];
     const box = document.createElement('div');
     box.style.flex = '1';
     box.style.minHeight = '0';
     box.style.marginBottom = i < 3 ? '6px' : '0';
-    box.style.border = '2px solid #333';
+    box.style.border = `2px solid ${theme.border}`;
     box.style.borderRadius = '14px';
     box.style.display = 'flex';
     box.style.flexDirection = 'column';
@@ -5205,19 +5307,25 @@ function openTeleportPrompt(team) {
     box.style.justifyContent = 'center';
     box.style.gap = '2px';
     box.style.overflow = 'auto';
-    box.style.background = (t === team) ? '#e5e7eb' : '#fff';
-    box.ondragover = (e) => e.preventDefault();
+    box.style.background = theme.bg;
+    box.style.boxShadow = '0 1px 2px rgba(0,0,0,0.08)';
+    box.style.opacity = (t === team) ? '0.55' : '1';
+    box.style.transition = 'box-shadow .12s, transform .12s';
+    box.ondragover = (e) => { e.preventDefault(); box.style.boxShadow = `0 0 0 3px ${theme.border}`; box.style.transform = 'scale(1.02)'; };
+    box.ondragleave = () => { box.style.boxShadow = '0 1px 2px rgba(0,0,0,0.08)'; box.style.transform = 'scale(1)'; };
     box.ondrop = (e) => {
       e.preventDefault();
+      box.style.boxShadow = '0 1px 2px rgba(0,0,0,0.08)'; box.style.transform = 'scale(1)';
       const unitId = e.dataTransfer.getData('text/plain');
       teleportStaged[unitId] = t;
       openTeleportPrompt(team);
     };
 
     const label = document.createElement('div');
-    label.style.fontWeight = 'bold';
+    label.style.fontWeight = '800';
     label.style.fontSize = '12px';
-    label.textContent = ZONE_LABELS[t];
+    label.style.color = theme.text;
+    label.textContent = ZONE_LABELS[t] + (t === team ? ' (내 구역)' : '');
     box.appendChild(label);
 
     Object.entries(teleportStaged).forEach(([uid, tt]) => {
@@ -5225,11 +5333,12 @@ function openTeleportPrompt(team) {
       const u = players.find(p => p.id === uid);
       if (!u) return;
       const chip = document.createElement('div');
-      chip.textContent = u.name;
+      chip.textContent = `${u.name} ✕`;
       chip.title = '클릭하면 취소(사각형으로 되돌아감)';
       chip.style.fontSize = '11px';
+      chip.style.fontWeight = '600';
+      chip.style.color = theme.text;
       chip.style.cursor = 'pointer';
-      chip.style.textDecoration = 'underline';
       chip.onclick = () => { delete teleportStaged[uid]; openTeleportPrompt(team); };
       box.appendChild(chip);
     });
@@ -5242,8 +5351,18 @@ function openTeleportPrompt(team) {
   popup.appendChild(row);
 
   const confirm = document.createElement('button');
-  confirm.className = 'block w-full text-left px-3 py-2 rounded border border-gray-500 mt-3';
-  confirm.textContent = '확인 (턴 진행)';
+  confirm.className = 'w-full';
+  confirm.style.marginTop = '12px';
+  confirm.style.padding = '9px 0';
+  confirm.style.borderRadius = '10px';
+  confirm.style.border = 'none';
+  confirm.style.fontWeight = '800';
+  confirm.style.fontSize = '13px';
+  confirm.style.color = '#fff';
+  confirm.style.background = 'linear-gradient(135deg,#10b981,#059669)';
+  confirm.style.boxShadow = '0 2px 6px rgba(5,150,105,0.4)';
+  confirm.style.cursor = 'pointer';
+  confirm.textContent = '✅ 확인 (턴 진행)';
   confirm.onclick = () => applyStagedTeleports(team);
   popup.appendChild(confirm);
 
@@ -5267,9 +5386,12 @@ function applyStagedTeleports(team) {
 function closeTeleportPrompt() {
   teleportPick.active = false; teleportPick.team = null; teleportPick.unitId = null;
   teleportStaged = {};
+  teleportStackOpenKey = null;
+  teleportArmedUnitByKey = {};
   popup.dataset.lock = '0';
   popup.style.display = 'none';
   popup.style.maxWidth = '';
+  popup.style.padding = '';
   drawBoard();
   if (online) { const state = toRoomState(); broadcast({ t: 'SYNC', state, hash: hashState() }); }
 }
