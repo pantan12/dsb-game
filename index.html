@@ -3174,11 +3174,11 @@ function resolveBattles(onlyTeams = null) {
 
     // 패배자
     let losers;
-    if (winners.length !== 1) {
-      losers = [...units]; // 동률: 전부 패배
+    if (winners.length === teamsHere.length) {
+      losers = [...units]; // 모든 팀 동률: 전부 패배
     } else {
-      const winTeam = winners[0];
-      losers = units.filter(u => u.team !== winTeam);
+      // 단독 1등 또는 일부만 동률(공동 1등): 1등 팀(들)을 제외한 나머지 말 제거
+      losers = units.filter(u => !winners.includes(u.team));
     }
 
     // 일단 제거 예정
