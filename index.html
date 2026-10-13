@@ -5202,10 +5202,12 @@ function openTeleportPrompt(team) {
     top: ((y + 0.5) / size) * SQUARE - dotSize / 2
   });
 
+  const statLabel = (u) => `⚔${u.power ?? 1} 🎯${u.range ?? 0} 👟${u.movement ?? 1}`;
+
   const makeDraggableDot = (u, onReopen) => {
     const dot = document.createElement('div');
     dot.draggable = true;
-    dot.title = `${u.name} (${u.x + 1},${u.y + 1})`;
+    dot.title = `${u.name} (${u.x + 1},${u.y + 1}) · ${statLabel(u)}`;
     dot.textContent = u.name.slice(0, 1);
     dot.className = `${u.color} absolute flex items-center justify-center select-none`;
     const { left, top } = posOf(u.x, u.y);
@@ -5268,7 +5270,8 @@ function openTeleportPrompt(team) {
       group.forEach(u => {
         nameSeen[u.name] = (nameSeen[u.name] || 0) + 1;
         const item = document.createElement('div');
-        item.textContent = nameTotal[u.name] > 1 ? `${u.name} #${nameSeen[u.name]}` : u.name;
+        const nameLine = nameTotal[u.name] > 1 ? `${u.name} #${nameSeen[u.name]}` : u.name;
+        item.innerHTML = `<div style="font-weight:600;">${nameLine}</div><div style="font-size:10px;color:#6b7280;">${statLabel(u)}</div>`;
         Object.assign(item.style, { padding: '3px 8px', cursor: 'pointer', borderRadius: '4px' });
         item.onmouseenter = () => item.style.background = '#e5e7eb';
         item.onmouseleave = () => item.style.background = '';
