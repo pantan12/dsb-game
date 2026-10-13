@@ -3099,7 +3099,8 @@ function canEvolve(u){
   const implemented = new Set(['광대','고목','닌자','도박사','저격수','비숍','사육사','코끼리','고양이','개구리']);
   return implemented.has(u.name);
 }
-function resolveBattles() {
+// onlyTeams: 지정하면 그 팀(들)의 말이 들어 있는 칸에서만 전투를 정산 (즉시 전투 버튼을 누른 플레이어)
+function resolveBattles(onlyTeams = null) {
   const byCell = new Map();
   for (const p of players) {
     const key = `${p.x},${p.y}`;
@@ -3118,6 +3119,9 @@ function resolveBattles() {
 
     const teamsHere = [...new Set(units.map(u => u.team))];
     if (teamsHere.length < 2) continue;
+
+    // 즉시 전투를 누른 플레이어의 말이 관여하지 않은 칸은 건너뜀
+    if (onlyTeams && !teamsHere.some(t => onlyTeams.has(t))) continue;
 
     // 왕좌 쟁탈전 4분할: 구역 스폰 칸은 영구 전투 면역
     if (winMode === 'king' && ZONE_SAFE_SET.has(key)) continue;
@@ -6537,8 +6541,16 @@ setInterval(() => {
 // 전투는 턴 종료가 아니라 이 버튼을 눌렀을 때만 정산됨
 function triggerInstantBattle() {
   if (gameEnded) return;
+  // 버튼을 누른 플레이어의 팀: 오프라인은 현재 차례 팀, 온라인은 내가 소유한 팀(들)
+  let myTeams;
+  if (online) {
+    myTeams = new Set(Object.keys(owners || {}).filter(k => owners[k] === myPeerId).map(Number));
+  } else {
+    myTeams = new Set([currentTurn]);
+  }
+  if (myTeams.size === 0) { status && (status.textContent = '전투를 일으킬 내 말이 없습니다'); return; }
   pushSnapshot('instantBattle');
-  resolveBattles();
+  resolveBattles(myTeams);
   drawBoard();
   if (online) {
     const state = toRoomState();
