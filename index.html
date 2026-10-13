@@ -4894,6 +4894,7 @@ function startModeSelection() {
 
   popup.innerHTML = '<p class="font-bold mb-2">게임 방식을 선택하세요</p>';
 
+  // ===== 점령전 모드: 플레이 비활성화 (코드는 보존, 버튼만 숨김) =====
   const territoryBtn = document.createElement('button');
   territoryBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-2';
   territoryBtn.textContent = '점령전 (가운데 칸을 점령해 30점을 먼저 모으면 승리)';
@@ -4918,6 +4919,7 @@ function startModeSelection() {
     startDraftModeSelection();
   };
 
+  // ===== 타이쿤 모드: 플레이 비활성화 (코드는 보존, 버튼만 숨김) =====
   const tycoonBtn = document.createElement('button');
   tycoonBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
   tycoonBtn.textContent = '타이쿤 모드 (일반 병사 1기로 시작, 골드를 모아 목표량을 먼저 달성하면 승리)';
@@ -4927,9 +4929,8 @@ function startModeSelection() {
     startTycoonMode();
   };
 
-  popup.appendChild(territoryBtn);
+  // 현재는 왕좌 쟁탈전만 플레이 가능 (점령전/타이쿤은 버튼을 붙이지 않아 선택 불가)
   popup.appendChild(kingBtn);
-  popup.appendChild(tycoonBtn);
   popup.style.left = '50%';
   popup.style.top  = '50%';
   popup.style.transform = 'translate(-50%, -50%)';
