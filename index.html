@@ -409,6 +409,7 @@ body { padding-bottom: 4.5rem; }
   <div class="max-w-5xl mx-auto px-3 py-2 flex items-center justify-between gap-3">
     <div class="flex items-center gap-2">
       <button id="diceBtn" class="px-3 py-2 rounded bg-emerald-500 text-black font-bold">🎲 주사위 굴리기</button>
+      <button id="instantBattleBtn" class="px-3 py-2 rounded bg-orange-600 text-white font-bold">⚔️ 즉시 전투</button>
       <button id="endTurnBtn" class="px-3 py-2 rounded bg-rose-500 text-white font-bold">차례 넘기기</button>
       <button id="surrenderBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold">항복</button>
       <button id="undoBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold">되돌리기</button>
@@ -1066,6 +1067,7 @@ const shopMenuBtn = document.getElementById('shopMenuBtn');
     const diceResult = document.getElementById('diceResult');
     const moveEnergyDisplay = document.getElementById('moveEnergyDisplay');
     const endTurnBtn = document.getElementById('endTurnBtn');
+    const instantBattleBtn = document.getElementById('instantBattleBtn');
     const defeatMsg = document.getElementById('defeatMsg');
     const deselectBtn = document.getElementById('deselectBtn');
     const scoreBoard = document.getElementById('scoreBoard');
@@ -1320,7 +1322,6 @@ function startDeploymentPhase() {
     // 활성 팀이 없다면 배치 없이 바로 진행 종료
     deploy.active = false;
     status && (status.textContent = '배치할 팀이 없습니다');
-    if (typeof maybeStartTeleportPhase === 'function') maybeStartTeleportPhase(currentTurn);
     drawBoard();
     return;
   }
@@ -1469,7 +1470,6 @@ function advanceDeployTeam() {
     if (allDeploymentDone()) {
       deploy.active = false;
       status && (status.textContent = '배치 완료! 게임을 진행하세요');
-      if (typeof maybeStartTeleportPhase === 'function') maybeStartTeleportPhase(currentTurn);
       drawBoard();
       if (online) {
         const state = toRoomState();
@@ -1490,7 +1490,6 @@ function advanceDeployTeam() {
   if (deploy.idx >= deploy.order.length) {
     deploy.active = false;
     status && (status.textContent = '배치 완료! 게임을 진행하세요');
-    if (typeof maybeStartTeleportPhase === 'function') maybeStartTeleportPhase(currentTurn);
     drawBoard();
     return;
   }
@@ -1581,7 +1580,8 @@ diceBtn.addEventListener('click', window.__diceHandler__);
 const colors = ['bg-red-600', 'bg-yellow-400', 'bg-blue-600', 'bg-green-600'];
 for (let t = 0; t < 4; t++) {
   for (let i = 1; i <= 10; i++) {
-    players.push({ id: `p${t + 1}-${i}`, name: '일반 병사', x: t === 0 ? 0 : t === 1 ? size - 1 : t === 2 ? size - 1 : 0, y: t === 0 ? 0 : t === 1 ? 0 : t === 2 ? size - 1 : size - 1, color: colors[t], power: 1, team: t, movement: 1, range: 0 });
+    const startCell = getNonKingStartCell(t);
+    players.push({ id: `p${t + 1}-${i}`, name: '일반 병사', x: startCell.x, y: startCell.y, color: colors[t], power: 1, team: t, movement: 1, range: 0 });
   }
   // 왕을 게임에 등장시키던 코드(비활성화): 새 규칙에서는 왕이 존재하지 않음
   // players.push({ id: `p${t + 1}-king`, name: '왕', x: t === 0 ? 0 : t === 1 ? size - 1 : t === 2 ? size - 1 : 0, y: t === 0 ? 0 : t === 1 ? 0 : t === 2 ? size - 1 : size - 1, color: colors[t], power: 1, team: t, movement: 1, range: 0 });
@@ -2269,6 +2269,8 @@ function makeOnCellClick(x, y, onCellPlayers) {
     if (isOrthogonalNeighbor(sel.x, sel.y, x, y)) {
       const dx = x - sel.x;
       const dy = y - sel.y;
+      if (isClashCell(sel.x, sel.y)) { status && (status.textContent = '전투 대기 중인 유닛입니다 — "⚔️ 즉시 전투"로 먼저 정산하세요'); return; }
+      if (sel.name !== '왕' && isOwnKingExclusionCell(sel.team, x, y)) { status && (status.textContent = '자기 팀 왕의 바로 주변 칸에는 들어갈 수 없습니다'); return; }
       if (!canApplyStep(sel, dx, dy)) return;
       pushSnapshot('click-move'); // 이동도 입력이므로 스냅샷
       applyStep(sel, dx, dy);
@@ -3342,6 +3344,32 @@ function startOfTurnPassives(team){
         y: team === 0 ? 0 : (team === 1 ? 0 : (team === 2 ? size - 1 : size - 1))
       };
     }
+    // 왕좌 쟁탈전 4분할: 왕을 제외한 유닛은 코너(왕 자리)에서 대각선으로 2칸 떨어진 곳에서 시작
+    // (왕 주변 1칸은 자기 팀 유닛도 들어갈 수 없으므로, 그 밖에서 시작해야 함)
+    function getNonKingStartCell(team) {
+      const corner = getTeamCorner(team);
+      const dx = corner.x === 0 ? 2 : -2;
+      const dy = corner.y === 0 ? 2 : -2;
+      return {
+        x: Math.max(0, Math.min(size - 1, corner.x + dx)),
+        y: Math.max(0, Math.min(size - 1, corner.y + dy))
+      };
+    }
+    // 왕좌 쟁탈전 4분할: 자기 팀 왕의 바로 주변 1칸(대각선 포함, 왕이 있는 칸 자체는 제외)에는
+    // 같은 팀의 다른 유닛이 들어갈 수 없음
+    function isOwnKingExclusionCell(team, x, y) {
+      const king = players.find(p => p.team === team && p.name === '왕' && p.x >= 0 && p.y >= 0);
+      if (!king) return false;
+      if (king.x === x && king.y === y) return false;
+      return Math.max(Math.abs(king.x - x), Math.abs(king.y - y)) === 1;
+    }
+    // 전투는 "즉시 전투" 버튼을 눌러야 정산되므로, 안전구역이 아닌 칸에서 서로 다른 팀이
+    // 겹쳐 있는 동안("전투 대기 중")에는 그 칸에 있는 어떤 유닛도 움직일 수 없음
+    function isClashCell(x, y) {
+      if (winMode === 'king' && typeof ZONE_SAFE_SET !== 'undefined' && ZONE_SAFE_SET.has(`${x},${y}`)) return false;
+      const teamsHere = new Set(players.filter(p => p.x === x && p.y === y && !isCastle(p)).map(p => p.team));
+      return teamsHere.size >= 2;
+    }
     function teleportAllToStartCorners() {
       for (const u of players) {
         if (isCastle?.(u)) continue;       // 성(구조물)은 이동시키지 않음
@@ -3561,7 +3589,7 @@ function endTurn() {
   // 왕좌 쟁탈전 4분할: 턴 시작 텔레포트 선택을 끝내지 않으면 턴을 넘길 수 없음
   if (teleportPick.active) { status && (status.textContent = '텔레포트 팝업에서 "완료"를 눌러야 턴을 넘길 수 있습니다'); return; }
   pushSnapshot('endTurn');
-  if (typeof resolveBattles === 'function') resolveBattles();
+  // 전투는 더 이상 턴 종료 시 자동으로 일어나지 않음 — "즉시 전투" 버튼(triggerInstantBattle)을 눌러야 정산됨
 
   clearCartLinkForTeam?.(currentTurn);
   if (puppetSwap?.active) { cancelPuppetSwap(); if (skillPopup) skillPopup.style.display = 'none'; if (skillMenuBtn) skillMenuBtn.textContent = '스킬창'; }
@@ -5975,6 +6003,7 @@ function applyRoll(result){
 }
 function canApplyStep(piece, dx, dy){
   if (piece._teleportLockThisTurn) return false; // 이번 턴에 텔레포트한 유닛은 추가 이동 불가
+  if (isClashCell(piece.x, piece.y)) return false; // 안전구역 밖에서 다른 팀과 같은 칸에 있으면("전투 대기") 움직일 수 없음
   const mv = Number(piece.movement ?? 1);
 const blazePassiveActive = (piece.name === '블레이즈' && piece._emberBoosted === true);
 
@@ -5983,6 +6012,7 @@ if (!blazePassiveActive && !(mv > 0)) return false;
 
 const nx = piece.x + dx, ny = piece.y + dy;
 if (nx < 0 || nx >= size || ny < 0 || ny >= size) return false;
+if (piece.name !== '왕' && isOwnKingExclusionCell(piece.team, nx, ny)) return false; // 자기 팀 왕 주변 1칸 진입 금지
 if (isEnteringEnemyFrog?.(piece.x, piece.y, nx, ny, piece.team)) return false;
 if (isWaterPuddle?.(nx, ny) && !canStandOnWaterPuddle?.(piece)) return false;
 
@@ -6504,6 +6534,18 @@ setInterval(() => {
     broadcast({ t: 'SYNC', state, hash: hashState() });
   }
 }, 5000);
+// 전투는 턴 종료가 아니라 이 버튼을 눌렀을 때만 정산됨
+function triggerInstantBattle() {
+  if (gameEnded) return;
+  pushSnapshot('instantBattle');
+  resolveBattles();
+  drawBoard();
+  if (online) {
+    const state = toRoomState();
+    broadcast({ t: 'SYNC', state, hash: hashState() });
+  }
+}
+instantBattleBtn.addEventListener('click', () => { triggerInstantBattle(); });
 endTurnBtn.addEventListener('click', () => {
     if (online && !awaitGetIsMyTurn()) { status.textContent='내 차례가 아닙니다'; return; }
   selectedPlayerId = null;
