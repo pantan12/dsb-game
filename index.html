@@ -17,6 +17,7 @@
   <style>
   /* === 반응형 셀 크기 & 스크롤 가능 래퍼 === */
 :root { --cell: 4rem; }                 /* 기본 PC 셀 크기 */
+:root { --cell-zoom: 8rem; }            /* 왕좌 쟁탈전 4분할: 구역(7x7) 확대 셀 크기 (JS가 실제 값으로 매번 재계산) */
 #board { 
   display: grid; 
   grid-template-columns: repeat(14, var(--cell));
@@ -389,6 +390,8 @@ body { padding-bottom: 4.5rem; }
 </div>
   <div id="popup"></div>
   <div id="turnSkillPanel"></div>
+<!-- 왕좌 쟁탈전 4분할: 구역 탭 바 (MAIN/1P/2P/3P/4P) -->
+<div id="zoneTabBar" class="w-full max-w-5xl mx-auto mb-2 grid grid-cols-5 gap-2" style="display:none"></div>
 <!-- 보드 영역 -->
 <div id="boardWrapper" class="w-full max-w-5xl mx-auto">
   <div id="board"></div>
@@ -1131,6 +1134,10 @@ const deploy = {
   queueByTeam: new Map(), // team -> 배열(배치할 말들)
   startPos: new Map()     // team -> {x,y}
 };
+// 왕좌 쟁탈전: 턴 시작 시 "다른 구역으로 텔레포트" 선택 상태 (네트워크 동기화 대상)
+const teleportPick = { active: false, team: null, unitId: null };
+// 왕좌 쟁탈전: 보드 뷰(줌) 상태 — 클라이언트 로컬 UI 전용, 절대 toRoomState에 포함하지 않음
+let boardViewZone = 'MAIN'; // 'MAIN' | 0 | 1 | 2 | 3
 // ===== 온라인: 현재 게임상태 → 문서 / 문서 → 게임상태 =====
 // 큰 상태를 통째로 동기화(1차 버전 간편 전략)
 function mapToObj(m){ const o={}; m.forEach((v,k)=>o[k]=v); return o; }
@@ -1195,6 +1202,7 @@ function toRoomState(){
     modeSelect, gameMode,
     winModeSelect, winMode,
     teamGold, tycoonPowerBonus, tycoonMoveMult, tycoonBuys, tycoonBossActive,
+    teleportPick: { active: teleportPick.active, team: teleportPick.team, unitId: teleportPick.unitId },
   };
 }
 function applyRoomState(s){
@@ -1273,6 +1281,8 @@ try {
   if (gameMode === 'tycoon') {
     shopMenuBtn && (shopMenuBtn.style.display = '');
   }
+
+  Object.assign(teleportPick, s.teleportPick || { active: false, team: null, unitId: null });
 
   diceResult.textContent = diceRolledThisTurn ? `🎲 주사위 결과: ${lastDiceRoll ?? ''}` : '';
   moveEnergyDisplay.textContent = `남은 이동 에너지: ${moveEnergy}`;
@@ -2098,6 +2108,7 @@ function makeOnCellClick(x, y, onCellPlayers) {
   return function onCellClick(e) {
     e.stopPropagation();
     if (gameEnded) { status && (status.textContent = '게임이 종료되었습니다'); return; }
+    if (teleportPick.active) { status && (status.textContent = '턴 시작 팝업에서 텔레포트를 먼저 완료(또는 "완료" 클릭)하세요'); return; }
     if (bishopDash.active) {
       const unit = players.find(p => p.id === bishopDash.unitId);
       bishopDash.active = false; // 클릭 1회로 종료
@@ -2259,13 +2270,26 @@ function makeOnCellClick(x, y, onCellPlayers) {
 }
     function drawBoard() {
     if (!board) return;
-  board.style.gridTemplateColumns = `repeat(${size}, var(--cell))`;
-  board.style.gridTemplateRows = `repeat(${size}, var(--cell))`;
+
+  // 왕좌 쟁탈전 4분할: MAIN(전체) 또는 1P~4P(7x7 확대) 뷰 범위 계산
+  let __vx0 = 0, __vx1 = size - 1, __vy0 = 0, __vy1 = size - 1, __cellVar = '--cell';
+  if (winMode === 'king' && boardViewZone !== 'MAIN') {
+    const q = getTeamQuadrant(boardViewZone);
+    __vx0 = q.x0; __vx1 = q.x1; __vy0 = q.y0; __vy1 = q.y1; __cellVar = '--cell-zoom';
+    // 줌 칸 크기를 계산해서 전체 판 크기(가로/세로)가 MAIN과 같아지도록 맞춤
+    const __base = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--cell'));
+    const __gap = 0.25; // rem, #board의 gap과 동일
+    const __cols = __vx1 - __vx0 + 1;
+    const __zoomRem = ((size * __base + (size - 1) * __gap) - (__cols - 1) * __gap) / __cols;
+    document.documentElement.style.setProperty('--cell-zoom', `${__zoomRem}rem`);
+  }
+  board.style.gridTemplateColumns = `repeat(${__vx1 - __vx0 + 1}, var(${__cellVar}))`;
+  board.style.gridTemplateRows = `repeat(${__vy1 - __vy0 + 1}, var(${__cellVar}))`;
   board.innerHTML = '';
 
   // popup.dataset.lock이 '1'이면 절대 숨기지 않음
   if (popup?.dataset?.lock !== '1' &&
-      !(specialDraft?.active || randomDraft?.active || modeSelect?.active)) {
+      !(specialDraft?.active || randomDraft?.active || modeSelect?.active || teleportPick?.active)) {
     if (typeof popup !== 'undefined') popup.style.display = 'none';
   }
 
@@ -2327,10 +2351,13 @@ function makeOnCellClick(x, y, onCellPlayers) {
     }
   }
 
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
+  const __cellMap = new Map();
+  for (let y = __vy0; y <= __vy1; y++) {
+    for (let x = __vx0; x <= __vx1; x++) {
       const cell = document.createElement('div');
       cell.className = `relative flex items-center justify-center border ${getCornerColor(x, y)}`;
+      cell.dataset.x = x; cell.dataset.y = y;
+      __cellMap.set(`${x},${y}`, cell);
 
       if (showerPuddleTargetSet && showerPuddleTargetSet.has(`${x},${y}`)) {
         const puddleTargetHint = document.createElement('div');
@@ -2422,11 +2449,9 @@ cell.addEventListener('click', handler);
   // 눈덩이 UI 동기화
   syncSnowballsToSnowmen();
   syncGiftsToSantas();
-  const cells = board.children; // y*size + x
   for (let i = 0; i < snowballs.length; i++) {
     const {x,y} = snowballs[i];
-    const idx = y * size + x;
-    const cell = cells[idx];
+    const cell = __cellMap.get(`${x},${y}`);
     if (!cell) continue;
 
     const img = document.createElement('img');
@@ -2445,8 +2470,7 @@ img.style.height = '70%';
   // 선물 렌더
 for (let i = 0; i < gifts.length; i++) {
   const { x, y } = gifts[i];
-  const idx = y * size + x;
-  const cell = cells[idx];
+  const cell = __cellMap.get(`${x},${y}`);
   if (!cell) continue;
 
   const gift = document.createElement('div');
@@ -2458,8 +2482,7 @@ for (let i = 0; i < gifts.length; i++) {
   // 끊어진 실 렌더 (인형사 패시브로 생긴 실)
   for (let i = 0; i < severedThreads.length; i++) {
     const { x, y } = severedThreads[i];
-    const idx = y * size + x;
-    const cell = cells[idx];
+    const cell = __cellMap.get(`${x},${y}`);
     if (!cell) continue;
 
     const thread = document.createElement('div');
@@ -2475,6 +2498,10 @@ for (let i = 0; i < gifts.length; i++) {
   updateShowerPressureBuff();
   updateHydrophilicPuddleBuff();
   updatePoisonBuff();
+
+  // 왕좌 쟁탈전 4분할: 구역 탭 바 갱신 + 턴 시작 텔레포트 팝업 오픈
+  renderZoneTabBar();
+  if (teleportPick.active) openTeleportPrompt(teleportPick.team);
 }
 // 샤워기 패시브 '수압 증가': 물 웅덩이 위 또는 바로 주변 한 칸이면 전:4/사:3, 아니면 기본 전:1/사:1로 복귀
 function updateShowerPressureBuff() {
@@ -2763,6 +2790,8 @@ const pageItems = listing.slice(start, end);
     }
         // 🔒 온라인 모드: 내 차례 아니면 키 입력 무시
     if (online && !awaitGetIsMyTurn()) return;
+    // 왕좌 쟁탈전 4분할: 턴 시작 텔레포트 선택 중에는 일반 이동 입력 무시
+    if (teleportPick.active) return;
 
     pushSnapshot('move');
 
@@ -3059,6 +3088,9 @@ function resolveBattles() {
 
     const teamsHere = [...new Set(units.map(u => u.team))];
     if (teamsHere.length < 2) continue;
+
+    // 왕좌 쟁탈전 4분할: 구역 스폰 칸은 영구 전투 면역
+    if (winMode === 'king' && ZONE_SAFE_SET.has(key)) continue;
 
     // 기본 전투력
     const baseTeamPower = new Map();
@@ -3498,6 +3530,8 @@ function startOfTurnPassives(team){
     // ✅ 턴 종료: 전투 정산 → 생존 팀으로 턴 이동 → 상태 초기화
 function endTurn() {
   if (gameEnded) return;
+  // 왕좌 쟁탈전 4분할: 턴 시작 텔레포트 선택을 끝내지 않으면 턴을 넘길 수 없음
+  if (teleportPick.active) { status && (status.textContent = '텔레포트 팝업에서 "완료"를 눌러야 턴을 넘길 수 있습니다'); return; }
   pushSnapshot('endTurn');
   if (typeof resolveBattles === 'function') resolveBattles();
 
@@ -3564,6 +3598,16 @@ clearCheerBuffsForTeam(prevTeam);
 applyCheerBuffsForTeam(currentTurn);
 startOfTurnPassives(currentTurn);
 processBanishedReturns(currentTurn);
+
+// 왕좌 쟁탈전 4분할: 새 턴이 시작되는 팀의 텔레포트 잠금 해제 + 텔레포트 선택 팝업 오픈
+if (winMode === 'king') {
+  for (const u of players) {
+    if (u.team === currentTurn) u._teleportLockThisTurn = false;
+  }
+  teleportPick.active = true;
+  teleportPick.team = currentTurn;
+  teleportPick.unitId = null;
+}
 
 // 이하 기존 UI/상태 초기화 유지
 hasMovedThisTurn = false;
@@ -4916,6 +4960,10 @@ function startModeSelection() {
     popup.style.display = 'none';
     ensureKingsForAllTeams();
     updateScoreBoard();
+    // 왕좌 쟁탈전 4분할: 새 게임 시작 시 구역 뷰/텔레포트 상태 초기화
+    boardViewZone = 'MAIN';
+    teleportPick.active = false; teleportPick.team = null; teleportPick.unitId = null;
+    for (const u of players) delete u._teleportLockThisTurn;
     startDraftModeSelection();
   };
 
@@ -5011,6 +5059,93 @@ function getKingThroneCell(team) {
     y: Math.max(0, Math.min(size - 1, corner.y + dy))
   };
 }
+// 왕좌 쟁탈전 4분할: 각 팀의 7x7 구역 범위(각 팀 코너 기준, getTeamCorner와 동일한 규칙)
+function getTeamQuadrant(team) {
+  const corner = getTeamCorner(team);
+  const x0 = corner.x === 0 ? 0 : 7, x1 = x0 + 6;
+  const y0 = corner.y === 0 ? 0 : 7, y1 = y0 + 6;
+  return { x0, y0, x1, y1 };
+}
+// 왕좌 쟁탈전 4분할: 다른 팀이 텔레포트로 들어오는 스폰 칸(그 구역 왕 코너의 반대쪽, 보드 정중앙에서 가장 가까운 칸)
+function getZoneSpawnCell(team) {
+  const corner = getTeamCorner(team);
+  return { x: corner.x === 0 ? 6 : 7, y: corner.y === 0 ? 6 : 7 };
+}
+// 위 스폰 칸 4개는 영구적으로 전투 면역(resolveBattles에서 사용)
+const ZONE_SAFE_SET = new Set([0, 1, 2, 3].map(t => { const c = getZoneSpawnCell(t); return `${c.x},${c.y}`; }));
+const ZONE_LABELS = ['1P', '2P', '3P', '4P'];
+
+// 왕좌 쟁탈전 4분할: 구역 탭 바(MAIN/1P/2P/3P/4P) 렌더링 — king 모드에서만 보임
+function renderZoneTabBar() {
+  const bar = document.getElementById('zoneTabBar');
+  if (!bar) return;
+  if (winMode !== 'king') { bar.style.display = 'none'; return; }
+  bar.style.display = '';
+  bar.innerHTML = '';
+  ['MAIN', ...ZONE_LABELS].forEach((label, i) => {
+    const val = i === 0 ? 'MAIN' : i - 1; // 'MAIN' | 0..3
+    const btn = document.createElement('button');
+    btn.className = `px-3 py-2 rounded border w-full ${boardViewZone === val ? 'bg-emerald-500 text-black' : 'bg-gray-700 text-white'}`;
+    btn.textContent = label;
+    btn.onclick = () => { boardViewZone = val; drawBoard(); };
+    bar.appendChild(btn);
+  });
+}
+
+// 왕좌 쟁탈전 4분할: 턴 시작 텔레포트 선택 팝업 — 유닛을 몇 기든 원하는 다른 구역으로 보낼 수 있음
+function openTeleportPrompt(team) {
+  if (!teleportPick.active || teleportPick.team !== team) return;
+  // 온라인: 그 팀의 소유자만 실제로 조작(그 외 클라이언트는 평소처럼 '내 턴 아님' 상태로 자동 제한됨)
+  if (online && myPeerId && owners?.[String(team)] && owners[String(team)] !== myPeerId) return;
+
+  popup.dataset.lock = '1';
+  const myUnits = players.filter(p => p.team === team && p.x >= 0 && p.y >= 0 && !isCastle(p) && !p._teleportLockThisTurn);
+  popup.innerHTML = '<p class="font-bold mb-2">텔레포트할 유닛을 선택하세요 (원하는 만큼 보낼 수 있습니다)</p>';
+  myUnits.forEach(u => {
+    const btn = document.createElement('button');
+    btn.className = `block w-full text-left px-3 py-2 rounded mb-1 ${teleportPick.unitId === u.id ? 'bg-emerald-500 text-black' : 'hover:bg-gray-200 hover:text-black'}`;
+    btn.textContent = `${u.name} (${u.x + 1},${u.y + 1})`;
+    btn.onclick = () => { teleportPick.unitId = u.id; openTeleportPrompt(team); };
+    popup.appendChild(btn);
+  });
+  if (teleportPick.unitId) {
+    [0, 1, 2, 3].filter(t => t !== team).forEach(t => {
+      const b = document.createElement('button');
+      b.className = 'block w-full text-left px-3 py-2 rounded mb-1 bg-indigo-500 text-white';
+      b.textContent = `${ZONE_LABELS[t]} 구역으로 보내기`;
+      b.onclick = () => resolveTeleport(team, teleportPick.unitId, t);
+      popup.appendChild(b);
+    });
+  }
+  const done = document.createElement('button');
+  done.className = 'block w-full text-left px-3 py-2 rounded border border-gray-500 mt-2';
+  done.textContent = '완료 (턴 진행)';
+  done.onclick = () => closeTeleportPrompt();
+  popup.appendChild(done);
+  centerPopup(popup);
+  popup.style.display = 'block';
+}
+
+function resolveTeleport(team, unitId, targetTeam) {
+  const u = players.find(p => p.id === unitId);
+  if (u) {
+    const spawn = getZoneSpawnCell(targetTeam);
+    u.x = spawn.x; u.y = spawn.y;
+    u._teleportLockThisTurn = true; // 이번 턴 추가 이동 금지
+  }
+  teleportPick.unitId = null;
+  drawBoard(); // teleportPick.active가 유지되므로 drawBoard 끝에서 '남은 유닛' 목록으로 팝업이 자동 갱신됨
+  if (online) { const state = toRoomState(); broadcast({ t: 'SYNC', state, hash: hashState() }); }
+}
+
+function closeTeleportPrompt() {
+  teleportPick.active = false; teleportPick.team = null; teleportPick.unitId = null;
+  popup.dataset.lock = '0';
+  popup.style.display = 'none';
+  drawBoard();
+  if (online) { const state = toRoomState(); broadcast({ t: 'SYNC', state, hash: hashState() }); }
+}
+
 // 왕좌 쟁탈전: 각 팀(아직 살아있는=일반 병사가 남아있는 팀)에 왕을 1기씩 배치
 function ensureKingsForAllTeams() {
   for (let t = 0; t < 4; t++) {
@@ -5322,8 +5457,7 @@ function showCenterMessage(text, ms = 2000) {
 }
 
 function flashCell(x, y, ms = 1000, color = 'rgba(244, 114, 182, 0.65)') { // 기본: 분홍색, 1초
-  const idx = y * size + x;
-  const cell = board.children[idx];
+  const cell = board.querySelector(`[data-x="${x}"][data-y="${y}"]`);
   if (!cell) return;
   const overlay = document.createElement('div');
   overlay.className = 'absolute inset-0';
@@ -5571,6 +5705,7 @@ function applyRoll(result){
   if (online) { const state=toRoomState(); broadcast({ t:'SYNC', state, hash: hashState() }); }
 }
 function canApplyStep(piece, dx, dy){
+  if (piece._teleportLockThisTurn) return false; // 이번 턴에 텔레포트한 유닛은 추가 이동 불가
   const mv = Number(piece.movement ?? 1);
 const blazePassiveActive = (piece.name === '블레이즈' && piece._emberBoosted === true);
 
