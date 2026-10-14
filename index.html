@@ -412,7 +412,7 @@ body { padding-bottom: 4.5rem; }
       <button id="instantBattleBtn" class="px-3 py-2 rounded bg-orange-600 text-white font-bold">⚔️ 즉시 전투</button>
       <button id="endTurnBtn" class="px-3 py-2 rounded bg-rose-500 text-white font-bold">차례 넘기기</button>
       <button id="surrenderBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold">항복</button>
-      <button id="undoBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold">되돌리기</button>
+      <!-- 되돌리기 버튼: 화면에서는 숨김(코드/기능은 유지) --><button id="undoBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold" style="display:none" hidden>되돌리기</button>
       <button id="deselectBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold">선택 해제</button>
     </div>
     <div class="flex items-center gap-4 font-semibold">
@@ -2270,6 +2270,7 @@ function makeOnCellClick(x, y, onCellPlayers) {
       const dx = x - sel.x;
       const dy = y - sel.y;
       if (isClashCell(sel.x, sel.y)) { status && (status.textContent = '전투 대기 중인 유닛입니다 — "⚔️ 즉시 전투"로 먼저 정산하세요'); return; }
+      if (sel.name === '왕') { status && (status.textContent = '왕은 움직일 수 없습니다'); return; }
       if (sel.name !== '왕' && isOwnKingExclusionCell(sel.team, x, y)) { status && (status.textContent = '자기 팀 왕의 바로 주변 칸에는 들어갈 수 없습니다'); return; }
       if (!canApplyStep(sel, dx, dy)) return;
       pushSnapshot('click-move'); // 이동도 입력이므로 스냅샷
@@ -2795,20 +2796,50 @@ const pageItems = listing.slice(start, end);
   popup.style.transform = 'translate(-50%, -50%)';
 
   // 바깥 클릭 시 닫기(드래프트/모드/배치 중은 유지)
+  // 이전 팝업이 남긴 닫기 핸들러가 쌓여 새 팝업을 닫지 않도록 먼저 제거
+  if (window.__popupCloseHandler) document.removeEventListener('click', window.__popupCloseHandler);
   const closeHandler = (ev) => {
     if (specialDraft?.active || randomDraft?.active || modeSelect?.active || deploy?.active) return;
     try { popup.dataset.lock = '0'; } catch(e){}
     popup.style.display = 'none';
     document.removeEventListener('click', closeHandler);
+    if (window.__popupCloseHandler === closeHandler) window.__popupCloseHandler = null;
   };
+  window.__popupCloseHandler = closeHandler;
   // 약간 지연 후 바인딩(자기 자신 클릭으로 바로 닫히지 않게)
-  setTimeout(() => document.addEventListener('click', closeHandler), 0);
+  setTimeout(() => { if (window.__popupCloseHandler === closeHandler) document.addEventListener('click', closeHandler); }, 0);
 }
 
     
     function installMoveKeyHandler() {
   if (window.__moveHandlerInstalled) return;
   window.__moveHandlerInstalled = true;
+
+  // 왕좌 쟁탈전: ←/→ 방향키로 MAIN/1P/2P/3P/4P 화면 넘기기.
+  // 단, 선택한 말을 방향키로 실제 이동시킬 수 있는 상황이면 말 이동이 우선한다.
+  // (이동 핸들러보다 먼저 등록해야 이동으로 에너지가 바뀌기 전 상태로 판단할 수 있음)
+  document.addEventListener('keydown', function handleZoneTabKey(e) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if (winMode !== 'king') return;
+    if (specialDraft?.active || randomDraft?.active || deploy?.active) return;
+    const tag = (e.target && e.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) return;
+
+    const piece = selectedPlayerId ? players.find(p => p.id === selectedPlayerId) : null;
+    const blazeFree = piece && piece.name === '블레이즈' && piece._emberBoosted === true;
+    const pieceWillMove = piece && piece.team === currentTurn && !teleportPick.active &&
+      !(online && !awaitGetIsMyTurn()) &&
+      !(typeof isCastle === 'function' && isCastle(piece)) && piece.name !== '왕' &&
+      (blazeFree || (diceRolledThisTurn && moveEnergy > 0));
+    if (pieceWillMove) return;
+
+    e.preventDefault();
+    const order = ['MAIN', 0, 1, 2, 3];
+    const cur = Math.max(0, order.indexOf(boardViewZone));
+    const step = e.key === 'ArrowRight' ? 1 : -1;
+    boardViewZone = order[(cur + step + order.length) % order.length];
+    drawBoard();
+  });
 
   document.addEventListener('keydown', function handleMoveKey(e) {
     // 드래프트/랜덤/배치 중엔 핫키 일부만
@@ -2865,7 +2896,7 @@ const pageItems = listing.slice(start, end);
     if (e.key === 'q' || e.key === 'Q') {
       if (piece.name === '기자' && currentRound % 5 === 0 && piece._lastGatherRound !== currentRound) {
         const tx = piece.x, ty = piece.y;
-        for (const u of players) if (u.team === piece.team && u.id !== piece.id) { u.x = tx; u.y = ty; }
+        for (const u of players) if (u.team === piece.team && u.id !== piece.id && u.name !== '왕') { u.x = tx; u.y = ty; }
         piece._lastGatherRound = currentRound; drawBoard(); return;
       }
       if (piece.name === '닌자' && currentRound % 3 === 0 && isAlone?.(piece)) {
@@ -3103,6 +3134,8 @@ function canEvolve(u){
 function resolveBattles(onlyTeams = null) {
   const byCell = new Map();
   for (const p of players) {
+    // 추방(트럭 운전사 '2D 세카이' 등)으로 보드 밖(-1,-1)에 있는 말끼리 전투가 벌어져 영구 제거되는 것을 방지
+    if (!(p.x >= 0 && p.y >= 0)) continue;
     const key = `${p.x},${p.y}`;
     if (!byCell.has(key)) byCell.set(key, []);
     byCell.get(key).push(p);
@@ -3142,6 +3175,7 @@ function resolveBattles(onlyTeams = null) {
       for (const s of players) {
         if (typeof isCastle === 'function' && isCastle(s)) continue;
         if (!teamsHere.includes(s.team)) continue;
+        if (!(s.x >= 0 && s.y >= 0)) continue; // 보드 밖(추방 중)인 말은 지원 불가
         if (s.x === cx && s.y === cy) continue;
         const dist = Math.abs(s.x - cx) + Math.abs(s.y - cy);
         if (dist <= (s.range ?? 0)) {
@@ -3216,7 +3250,7 @@ for (const u of losers) {
         (Math.abs(p.x - cx) + Math.abs(p.y - cy) <= 2)
       );
       if (docs.length > 0 && Math.random() < 0.80) {
-        u.x = docs[0].x; u.y = docs[0].y;
+        if (u.name !== '왕') { u.x = docs[0].x; u.y = docs[0].y; } // 왕은 구조돼도 제자리에 남음
         toRemoveIds.delete(u.id);
       }
     }
@@ -3371,6 +3405,7 @@ function startOfTurnPassives(team){
     // 겹쳐 있는 동안("전투 대기 중")에는 그 칸에 있는 어떤 유닛도 움직일 수 없음
     function isClashCell(x, y) {
       if (winMode === 'king' && typeof ZONE_SAFE_SET !== 'undefined' && ZONE_SAFE_SET.has(`${x},${y}`)) return false;
+      if (!(x >= 0 && y >= 0)) return false; // 보드 밖(추방 중)은 전투 대기 아님
       const teamsHere = new Set(players.filter(p => p.x === x && p.y === y && !isCastle(p)).map(p => p.team));
       return teamsHere.size >= 2;
     }
@@ -3378,6 +3413,7 @@ function startOfTurnPassives(team){
       for (const u of players) {
         if (isCastle?.(u)) continue;       // 성(구조물)은 이동시키지 않음
         if (u.x < 0 || u.y < 0) continue;  // 추방 등으로 보드 밖에 있는 말은 제외
+        if (u.name === '왕') continue;     // 왕은 절대 움직이지 않음
         const corner = getTeamCorner(u.team);
         u.x = corner.x; u.y = corner.y;
       }
@@ -3639,7 +3675,8 @@ for (let i = 0; i < 4; i++) {
   if (activeTeams.includes(next)) break;
 }
 currentTurn = activeTeams.includes(next) ? next : activeTeams[0];
-if (currentTurn === 0) currentRound++;
+// 턴 순서가 한 바퀴 돌았을 때 라운드 증가 (1P가 탈락해도 라운드가 멈추지 않도록 — 멈추면 추방된 말이 영영 돌아오지 않음)
+if (currentTurn <= prevTeam) currentRound++;
 if (gameMode === 'tycoon' && currentRound % TYCOON_CONFIG.bossIntervalRounds === 0) {
   spawnTycoonBoss();
 }
@@ -3713,7 +3750,7 @@ function beginNinjaSwap(ninja) { ninjaSwap.active = true; ninjaSwap.ninjaId = ni
 let ninjaSwappedThisTurn = false;
   const cartLink = { active: false, pusherId: null, mateId: null, roundTagged: null };
 function beginCartLink(pusher) { cartLink.active = true; cartLink.pusherId = pusher.id; cartLink.mateId = null; cartLink.roundTagged = currentRound; status && (status.textContent = '같은 칸의 아군을 선택하세요 (P로 취소)'); }
-function setCartMate(mate) { cartLink.mateId = mate.id; cartLink.active = false; status && (status.textContent = '연결 완료: 함께 이동합니다 (L로 해제)'); }
+function setCartMate(mate) { if (mate?.name === '왕') { status && (status.textContent = '왕은 연결할 수 없습니다'); return; } cartLink.mateId = mate.id; cartLink.active = false; status && (status.textContent = '연결 완료: 함께 이동합니다 (L로 해제)'); }
 function cancelCartLink() { cartLink.active = false; cartLink.pusherId = null; cartLink.mateId = null; cartLink.roundTagged = null; status && (status.textContent = '연결 취소'); }
 function clearCartLinkForTeam(team) {
   if (!cartLink.pusherId) return;
@@ -3756,6 +3793,7 @@ function performPuppetSwap() {
   const lord = players.find(p => p.id === puppetSwap.lordId);
   const target = players.find(p => p.id === puppetSwap.targetId);
   if (!lord || !target) { cancelPuppetSwap(); return; }
+  if (lord.name === '왕' || target.name === '왕') { cancelPuppetSwap(); return; } // 왕은 위치 교체 불가
 
   pushSnapshot('skill:puppetSwap');
   const lx = lord.x, ly = lord.y;
@@ -3889,7 +3927,7 @@ function performCastleMove(targetCastle) {
   if (!isCastle(targetCastle) || targetCastle.team !== castleMove.team || targetCastle.id === castleMove.castleId) return;
   for (const id of castleMove.selectedIds) {
     const u = players.find(p => p.id === id);
-    if (u) { u.x = targetCastle.x; u.y = targetCastle.y; }
+    if (u && u.name !== '왕') { u.x = targetCastle.x; u.y = targetCastle.y; }
   }
   const movedCount = castleMove.selectedIds.size;
   cancelCastleMove();
@@ -4718,23 +4756,39 @@ function randomEmptyCell() {
   if (spots.length === 0) return null;
   return spots[Math.floor(Math.random() * spots.length)];
 }
-// 지정한 눈사람의 사거리 내에서 빈 칸을 무작위로 고른다(범위 내에 빈 칸이 없으면 아무 빈 칸이나 사용)
+// 지정한 눈사람의 사거리(맨해튼) 내에서 눈덩이 칸을 무작위로 고른다.
+// 예전에는 '말이 없는 빈 칸'만 후보로 삼다 보니, 사거리 1일 때 주변이 아군으로 막히면
+// 판 전체의 아무 칸으로 튀어 사거리 밖에 스폰되는 문제가 있었음.
+// → 사거리 안의 빈 칸 우선, 없으면 사거리 안의 (말이 있는) 칸, 그래도 없으면 사거리를 한 칸씩 넓혀 가장 가까운 곳에.
 function randomEmptyCellInSnowmanRange(snowman) {
-  if (!snowman) return randomEmptyCell();
-  const r = Number(snowman.range ?? 1);
-  const spots = [];
-  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-    if (cellOccupied(x,y) || snowballAt(x,y) !== -1) continue;
-    if (Math.abs(x - snowman.x) + Math.abs(y - snowman.y) <= r) spots.push({x,y});
-  }
+  if (!snowman || !(snowman.x >= 0 && snowman.y >= 0)) return randomEmptyCell();
+  const r = Math.max(1, Number(snowman.range ?? 1));
+  const collect = (minD, maxD) => {
+    const empty = [], occupied = [];
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const d = Math.abs(x - snowman.x) + Math.abs(y - snowman.y);
+      if (d < minD || d > maxD) continue;
+      if (d === 0 || snowballAt(x,y) !== -1) continue; // 눈사람 자기 칸/이미 눈덩이가 있는 칸 제외
+      (cellOccupied(x,y) ? occupied : empty).push({x,y});
+    }
+    return empty.length ? empty : occupied;
+  };
+  let spots = collect(1, r);
+  for (let rr = r + 1; spots.length === 0 && rr <= size * 2; rr++) spots = collect(rr, rr);
   if (spots.length === 0) return randomEmptyCell();
   return spots[Math.floor(Math.random() * spots.length)];
 }
 function syncSnowballsToSnowmen() {
   const snowmen = players.filter(p => p.name === '눈사람');
   const count = snowmen.length * 2;
+  // 보드 위의 눈사람 중, 사거리 안 눈덩이가 가장 적은 눈사람 주변에 고르게 배치
+  const onBoard = snowmen.filter(p => p.x >= 0 && p.y >= 0);
+  const anchors = onBoard.length ? onBoard : snowmen;
+  const inRangeCount = (sm) => snowballs.filter(b =>
+    Math.abs(b.x - sm.x) + Math.abs(b.y - sm.y) <= Math.max(1, Number(sm.range ?? 1))).length;
   while (snowballs.length < count) {
-    const anchor = snowmen[Math.floor(Math.random() * snowmen.length)];
+    let anchor = anchors[0];
+    for (const sm of anchors) if (inRangeCount(sm) < inRangeCount(anchor)) anchor = sm;
     const pos = randomEmptyCellInSnowmanRange(anchor);
     if (!pos) break;
     snowballs.push(pos);
@@ -5220,7 +5274,7 @@ function openTeleportPrompt(team) {
     if (teleportStackOpenKey) { teleportStackOpenKey = null; openTeleportPrompt(team); }
   };
 
-  const myUnits = players.filter(p => p.team === team && p.x >= 0 && p.y >= 0 && !isCastle(p) && !p._teleportLockThisTurn && teleportStaged[p.id] === undefined);
+  const myUnits = players.filter(p => p.team === team && p.name !== '왕' && p.x >= 0 && p.y >= 0 && !isCastle(p) && !p._teleportLockThisTurn && teleportStaged[p.id] === undefined);
   const groups = new Map(); // "x,y" -> units[]
   myUnits.forEach(u => {
     const key = `${u.x},${u.y}`;
@@ -5444,6 +5498,16 @@ function closeTeleportPrompt() {
   drawBoard();
   if (online) { const state = toRoomState(); broadcast({ t: 'SYNC', state, hash: hashState() }); }
 }
+
+// 턴 시작 텔레포트 팝업은 "확인" 버튼(applyStagedTeleports → closeTeleportPrompt)으로만 닫힘.
+// 바깥 클릭/다른 코드가 공용 popup을 숨기면 즉시 다시 띄운다.
+(function guardTeleportPopup() {
+  if (typeof MutationObserver === 'undefined' || !popup) return;
+  new MutationObserver(() => {
+    if (!teleportPick.active || popup.style.display !== 'none') return;
+    openTeleportPrompt(teleportPick.team);
+  }).observe(popup, { attributes: true, attributeFilter: ['style'] });
+})();
 
 // 왕좌 쟁탈전: 각 팀(아직 살아있는=일반 병사가 남아있는 팀)에 왕을 1기씩 배치
 function ensureKingsForAllTeams() {
@@ -6006,6 +6070,7 @@ function applyRoll(result){
   if (online) { const state=toRoomState(); broadcast({ t:'SYNC', state, hash: hashState() }); }
 }
 function canApplyStep(piece, dx, dy){
+  if (piece.name === '왕') return false; // 왕은 절대 움직일 수 없음
   if (piece._teleportLockThisTurn) return false; // 이번 턴에 텔레포트한 유닛은 추가 이동 불가
   if (isClashCell(piece.x, piece.y)) return false; // 안전구역 밖에서 다른 팀과 같은 칸에 있으면("전투 대기") 움직일 수 없음
   const mv = Number(piece.movement ?? 1);
@@ -7637,7 +7702,7 @@ if (name === '비숍' && unit.team === currentTurn) {
         execute: () => {
           const tx = unit.x, ty = unit.y;
           for (const u of players) {
-            if (u.team === unit.team && u.id !== unit.id) {
+            if (u.team === unit.team && u.id !== unit.id && u.name !== '왕') { // 왕은 소집되지 않음
               u.x = tx; u.y = ty;
             }
           }
@@ -7937,11 +8002,17 @@ function centerPopup(popupEl) {
   window.addEventListener('load', centerBoard);
   window.addEventListener('resize', centerBoard);
 
-  let dragging = false, sx = 0, sy = 0, sl = 0, st = 0, pid = null, armed = false;
+  // 칸 클릭 문제 수정:
+  // 예전에는 pointerdown마다 setPointerCapture를 걸고, pointerup에서 click을 직접 합성해 셀에 보냈다.
+  // 그런데 캡처 때문에 브라우저의 '진짜' click은 셀이 아닌 boardWrapper로 가서 document까지 올라갔고,
+  // 이전 팝업이 남겨 둔 '바깥 클릭 시 닫기' 핸들러가 그 click을 받아 방금 연 팝업을 바로 닫아 버렸다.
+  // (그래서 두 번째 클릭이 '안 눌린' 것처럼 보이고, 바깥 어두운 부분을 한 번 눌러 핸들러를 소모해야 했음)
+  // → 실제로 드래그가 시작될 때만 포인터를 캡처하고, 탭은 브라우저의 기본 click을 그대로 쓰며,
+  //   드래그 직후에 따라오는 click 하나만 막는다.
+  let dragging = false, sx = 0, sy = 0, sl = 0, st = 0, pid = null, armed = false, suppressClick = false;
 wrap.addEventListener('pointerdown', (e) => {
 if (e.target.closest('#popup') || e.target.closest('button')) return;
 pid = e.pointerId;
-wrap.setPointerCapture(pid);
 sx = e.clientX; sy = e.clientY; sl = wrap.scrollLeft; st = wrap.scrollTop;
 armed = true; dragging = false;
 });
@@ -7949,30 +8020,34 @@ wrap.addEventListener('pointermove', (e) => {
 if (!armed) return;
 const dx0 = e.clientX - sx, dy0 = e.clientY - sy;
 if (!dragging) {
-if (Math.abs(dx0) + Math.abs(dy0) > 3) dragging = true; // 임계값
+if (Math.abs(dx0) + Math.abs(dy0) > 3) { // 임계값
+  dragging = true;
+  try { wrap.setPointerCapture(pid); } catch(err){}
+}
 else return;
 }
 wrap.scrollLeft = sl - dx0;
 wrap.scrollTop = st - dy0;
 });
 const end = (ev) => {
-  const wasArmed = armed;
+  if (ev && ev.type === 'pointerleave' && dragging) return; // 드래그 중(캡처됨)에는 leave로 끝내지 않음
   const wasDragging = dragging;
-
   armed = false;
-  if (!pid) return;
-  try { wrap.releasePointerCapture(pid); } catch(e){}
-  pid = null;
   dragging = false;
-
-  // 드래그가 아닌 '탭/클릭'이면, click 이벤트를 합성해 보드 셀의 클릭 핸들러가 확실히 실행되도록 보장
-  if (wasArmed && !wasDragging && ev && typeof ev.clientX === 'number' && typeof ev.clientY === 'number') {
-    const el = document.elementFromPoint(ev.clientX, ev.clientY);
-    if (el) {
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-    }
+  if (pid !== null) { try { wrap.releasePointerCapture(pid); } catch(e){} }
+  pid = null;
+  if (wasDragging) {
+    // 드래그 직후 발생하는 click은 칸 클릭으로 처리하지 않음
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 0);
   }
 };
+window.addEventListener('click', (e) => {
+  if (!suppressClick) return;
+  suppressClick = false;
+  e.stopPropagation();
+  e.preventDefault();
+}, true);
 wrap.addEventListener('pointerup', (e) => end(e));
 wrap.addEventListener('pointercancel', (e) => end(e));
 wrap.addEventListener('pointerleave', (e) => end(e));
