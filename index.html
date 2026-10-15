@@ -5973,25 +5973,10 @@ function processBanishedReturns(turnTeam){
     if (u.team!==turnTeam) continue;
     if (!u._banishedUntilRound) continue;
     if (currentRound < u._banishedUntilRound) continue;
-    const backTo = u._banishedReturn || getTeamStartPos(u.team);
-let dest = backTo;
-
-// 1) 원래 칸
-if (!cellOccupied(backTo.x, backTo.y) && snowballAt(backTo.x, backTo.y) === -1) {
-  dest = backTo;
-} else {
-  // 2) 같은 팀 출발지점 시도
-  const kp = getTeamStartPos(u.team);
-  if (kp && !cellOccupied(kp.x, kp.y) && snowballAt(kp.x, kp.y) === -1) {
-    dest = kp;
-  } else {
-    // 3) 근거리(반경1~3)만 검색
-    const near = nearestEmptyCell(backTo.x, backTo.y);
-    dest = near || backTo;
-  }
-}
-
-u.x = dest.x; u.y = dest.y;
+    // 사라졌던 바로 그 칸으로 돌아온다(다른 말이 있어도 같은 칸에 놓임).
+    // 예전엔 그 칸이 비어 있지 않으면 출발 지점/근처 빈 칸으로 옮겨져서, 같은 칸에서 함께 사라진 말들이 흩어졌음.
+    const dest = u._banishedReturn || getTeamStartPos(u.team);
+    u.x = dest.x; u.y = dest.y;
     delete u._banishedUntilRound;
     delete u._banishedReturn;
   }
