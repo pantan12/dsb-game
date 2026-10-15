@@ -183,19 +183,20 @@ body { padding-bottom: 4.5rem; }
   cursor: not-allowed;
 }
 /* 보드 칸의 유닛 토큰(텔레포트 팝업과 같은 모양). 같은 칸에 여러 팀이 있으면 팀별로 나눠 배치 */
-.unit-tokens { container-type: size; display: grid; place-items: center; position: relative; z-index: 1; }
+.unit-tokens { --tok: var(--cell, 3rem); display: grid; place-items: center; position: relative; z-index: 1; }
 .unit-tokens-2 { grid-template-columns: 1fr 1fr; }
 .unit-tokens-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
 .unit-token {
-  width: 74cqmin; height: 74cqmin; border-radius: 50%;
+  width: calc(var(--tok) * 0.74); height: calc(var(--tok) * 0.74); border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-weight: 800; font-size: 38cqmin; line-height: 1;
+  color: #fff; font-weight: 800; font-size: calc(var(--tok) * 0.38); line-height: 1;
   border: 2px solid rgba(255,255,255,0.85);
   box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+  box-sizing: border-box;
   pointer-events: none;
 }
 .unit-token-stack { border-style: dashed; border-color: rgba(255,255,255,0.95); }
-.unit-token-small { width: 44cqmin; height: 44cqmin; font-size: 24cqmin; border-width: 1.5px; }
+.unit-token-small { width: calc(var(--tok) * 0.44); height: calc(var(--tok) * 0.44); font-size: calc(var(--tok) * 0.24); border-width: 1.5px; }
 /* 유닛 설명 창: 현재 판 위에 있는 유닛만 카드로 보여줌 */
 #unitInfoBackdrop {
   position: fixed; inset: 0; z-index: 70;
@@ -2620,6 +2621,7 @@ if (onCellPlayers.length > 0) {
   const multi = teamGroups.length > 1;
   const square = document.createElement('div');
   square.className = 'unit-tokens w-full h-full select-none';
+  square.style.setProperty('--tok', `var(${__cellVar})`); // 현재 화면의 칸 크기(MAIN: --cell, 확대: --cell-zoom)
   if (multi) square.classList.add(teamGroups.length === 2 ? 'unit-tokens-2' : 'unit-tokens-4');
   for (const g of teamGroups) {
     const token = document.createElement('div');
