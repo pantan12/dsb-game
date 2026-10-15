@@ -211,7 +211,6 @@ body { padding-bottom: 4.5rem; }
 }
 #unitInfoPopup .ui-title { font-weight: 800; font-size: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 #unitInfoPopup .ui-badge { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
-#unitInfoPopup .ui-evo { background: #f59e0b; color: #111827; }
 #unitInfoPopup .ui-tag { background: #0e7490; color: #ecfeff; }
 #unitInfoPopup .ui-stats { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 #unitInfoPopup .ui-stat { font-size: 12px; background: #111827; border: 1px solid #374151; border-radius: 6px; padding: 2px 8px; }
@@ -2020,7 +2019,7 @@ function addMerchants() {
       name: '상인',
       team, x: pos.x, y: pos.y,
       color: getTeamColor(team),
-      power: 0.5, movement: 1, range: 0,
+      power: 1, movement: 1, range: 0,
       type: 'merchant', _usedThisTurn: false, tags: ['특수 병사']
     });
   }
@@ -2207,7 +2206,7 @@ function makeOnCellClick(x, y, onCellPlayers) {
         if (lone.team !== unit.team && lone.name !== '왕') {
           const loneName = displayName(lone);
           removePlayer(lone, false, /*spawnsThread=*/true);
-          const msg = `♗ 자객: ${loneName} 즉시 제거!`;
+          const msg = `♗ 비숍★: ${loneName} 즉시 제거!`;
           status && (status.textContent = msg);
           showCenterMessage?.(msg, 2000);
         }
@@ -3159,7 +3158,7 @@ function applyEvolution(u){
       // 이후 어떤 형태로 변신해도(performKeeperTransform) 진화 효과가 유지된다.
       // 지금 마침 고양이 형태라면 즉시 전투력 +0.1 적용(다른 형태는 즉시 적용할 스탯 변화 없음).
       if (u.name === '고양이') {
-        u.power = +((u.power ?? 1) + 0.1).toFixed(2);
+        u.power = 1.1; // 진화 고양이 전투력
       }
       return true;
 
@@ -3285,16 +3284,17 @@ for (const u of losers) {
       unitsAll.filter(u => u.name === '의사' && u.x === cx && u.y === cy).map(u => u.team)
     );
 
-    // 의사 구조(사거리 2, 80%)
+    // 의사 구조: 전투 칸과 같은 구역(판을 4개로 나눈 구역)에 있는 의사가 있으면 80%, 아니면 20%
+    const zoneOf = (x, y) => { const h = Math.floor(size / 2); return (x < h ? 0 : 1) + (y < h ? 0 : 2); };
     for (const u of losers) {
       if (!toRemoveIds.has(u.id)) continue;
       if (hasDoctorOnCell.has(u.team)) continue;
-      const docs = players.filter(p =>
-        p.team === u.team && p.name === '의사' &&
-        (Math.abs(p.x - cx) + Math.abs(p.y - cy) <= 2)
-      );
-      if (docs.length > 0 && Math.random() < 0.80) {
-        if (u.name !== '왕') { u.x = docs[0].x; u.y = docs[0].y; } // 왕은 구조돼도 제자리에 남음
+      const docs = players.filter(p => p.team === u.team && p.name === '의사' && p.x >= 0 && p.y >= 0);
+      if (docs.length === 0) continue;
+      const sameZoneDoc = docs.find(d => zoneOf(d.x, d.y) === zoneOf(cx, cy));
+      const doc = sameZoneDoc || docs[0];
+      if (Math.random() < (sameZoneDoc ? 0.80 : 0.20)) {
+        if (u.name !== '왕') { u.x = doc.x; u.y = doc.y; } // 왕은 구조돼도 제자리에 남음
         toRemoveIds.delete(u.id);
       }
     }
@@ -3734,8 +3734,8 @@ for (const u of players) {
     u._truckUsedThisTurn = false;
   }
 }
-// 이전 팀 버프 제거 → 새 팀 버프 적용
-clearCheerBuffsForTeam(prevTeam);
+// 응원단장: 버프는 상대 차례에도 유지 → 다음 자기 차례가 시작될 때 지난 버프를 지우고 새로 적용
+clearCheerBuffsForTeam(currentTurn);
 applyCheerBuffsForTeam(currentTurn);
 startOfTurnPassives(currentTurn);
 processBanishedReturns(currentTurn);
@@ -3947,6 +3947,15 @@ function getTeamCastles(team) { return players.filter(p => isCastle(p) && p.team
 function countCastles(team) { return getTeamCastles(team).length; }
 function hasCastleAt(team, x, y) { return players.some(p => isCastle(p) && p.team === team && p.x === x && p.y === y); }
 function addCastle(team, x, y) {
+  // 성은 팀당 최대 5개. 6개째를 쌓으면 가장 오래된 성(players 배열에서 먼저 추가된 성)을 제거
+  const MAX_CASTLES = 5;
+  let castles = getTeamCastles(team);
+  while (castles.length >= MAX_CASTLES) {
+    const oldest = castles[0];
+    const idx = players.indexOf(oldest);
+    if (idx !== -1) players.splice(idx, 1);
+    castles = getTeamCastles(team);
+  }
   players.push({
     id: `castle-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
     name: '성', team, x, y,
@@ -4007,8 +4016,8 @@ function performKeeperTransform(label) {
   const FORM = {
     '사육사': { power: 1, movement: 1, range: 0, type: 'zookeeper' },
     '코끼리': { power: 3, movement: 2, range: 1, type: 'elephant' },
-    '고양이': { power: 1, movement: 0.5, range: 1, type: 'cat' },
-    '개구리': { power: 0.5, movement: 1, range: 2, type: 'frog' } // 개구리 제어에 range 사용됨
+    '고양이': { power: 0.9, movement: 0.5, range: 0, type: 'cat' },
+    '개구리': { power: 0, movement: 1, range: 2, type: 'frog' } // 개구리 제어(진입 금지 2칸)에 range 사용됨
   };
   const spec = FORM[label];
   if (!spec) return;
@@ -4025,7 +4034,7 @@ function performKeeperTransform(label) {
 
   // ✅ 진화(사육사 계열): 고양이(삵 아니고 칡) 형태일 때 전투력 +0.1. 스킬은 그대로, 스탯만 소폭 강화.
   if (unit._evolved && label === '고양이') {
-    unit.power = +((unit.power ?? 1) + 0.1).toFixed(2);
+    unit.power = 1.1; // 진화 고양이 전투력
   }
 
   // 변신으로 스탯이 새로 세팅되었으므로, 물 웅덩이 버프는 다음 렌더에서 새로 판정되도록 초기화
@@ -5337,7 +5346,7 @@ function openTeleportPrompt(team) {
   const makeDraggableDot = (u, onReopen) => {
     const dot = document.createElement('div');
     dot.draggable = true;
-    dot.title = `${u.name} (${u.x + 1},${u.y + 1}) · ${statLabel(u)}`;
+    dot.title = `${displayName(u)} (${u.x + 1},${u.y + 1}) · ${statLabel(u)}`;
     dot.textContent = u.name.slice(0, 1);
     dot.className = `${u.color} absolute flex items-center justify-center select-none`;
     const { left, top } = posOf(u.x, u.y);
@@ -5400,7 +5409,7 @@ function openTeleportPrompt(team) {
       group.forEach(u => {
         nameSeen[u.name] = (nameSeen[u.name] || 0) + 1;
         const item = document.createElement('div');
-        const nameLine = nameTotal[u.name] > 1 ? `${u.name} #${nameSeen[u.name]}` : u.name;
+        const nameLine = nameTotal[u.name] > 1 ? `${displayName(u)} #${nameSeen[u.name]}` : displayName(u);
         item.innerHTML = `<div style="font-weight:600;">${nameLine}</div><div style="font-size:10px;color:#6b7280;">${statLabel(u)}</div>`;
         Object.assign(item.style, { padding: '3px 8px', cursor: 'pointer', borderRadius: '4px' });
         item.onmouseenter = () => item.style.background = '#e5e7eb';
@@ -5480,7 +5489,7 @@ function openTeleportPrompt(team) {
       const u = players.find(p => p.id === uid);
       if (!u) return;
       const chip = document.createElement('div');
-      chip.textContent = `${u.name} ✕`;
+      chip.textContent = `${displayName(u)} ✕`;
       chip.title = '클릭하면 취소(사각형으로 되돌아감)';
       chip.style.fontSize = '11px';
       chip.style.fontWeight = '600';
@@ -5721,7 +5730,7 @@ function askTycoonPlayerCountAndSetup() {
 const ALL_SPECIAL_NAMES = [
   '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼',
   '의사','좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인',
-  '응원단장','트럭 운전사','블레이즈 & 엠버','비숍','산타클로스','샤워기','인형사'
+  '응원단장','트럭 운전사','블레이즈 & 엠버','비숍','샤워기','인형사' // 산타클로스: 게임에서 제외
 ];
 
 // 팀 시작 좌표(왕/일반 병사 기준)
@@ -5758,7 +5767,7 @@ function createSpecialUnitByName(name, team) {
     case '광대':     return { ...base, power: 1, range: 0, movement: 1, type: 'clown' };
     case '스키퍼':   return { ...base, power: 1, range: 0, movement: 1, type: 'trickster' };
     case '여왕개미': return { ...base, power: 1, range: 0, movement: 1, type: 'queenAnt', _ants: [] };
-    case '상인':     return { ...base, power: 0.5, range: 0, movement: 1, type: 'merchant', _usedThisTurn: false };
+    case '상인':     return { ...base, power: 1, range: 0, movement: 1, type: 'merchant', _usedThisTurn: false };
     case '개미':     return { id:`ant-${team}-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, name:'개미', team,
                               x: pos.x, y: pos.y, color: teamColor(team), power: 1, range: 0, movement: 1, type: 'ant' };
     case '응원단장': return { ...base, power: 1, range: 5, movement: 1, type: 'cheer' };
@@ -6877,14 +6886,14 @@ const UNIT_INFO = {
     ['멸망이다', '이 카드가 죽으면 게임에서 패배한다.'] ] },
   '저격수': { title: '저격수', stats: [1, 5, 1], skills: [
     ['지원 사격', '전투력을 지원할 때 지원 전투력은 기본 전투력 +2로 계산한다.'] ] },
-  '저격수*': { title: '저격수', evo: true, stats: [1, 5, 1], skills: [
+  '저격수*': { title: '저격수★', evo: true, stats: [1, 5, 1], skills: [
     ['지원 사격', '전투력을 지원할 때 지원 전투력은 기본 전투력 +2로 계산한다.'],
     ['저격', '턴 수가 2의 배수일 때 사거리 안의 유닛 하나를 선택해 즉시 제거한다. 성공 확률은 15%이며, 움직이지 않은 턴 수만큼 +10%씩 증가한다(최대 75%). 움직이면 초기화된다.'] ] },
   '기자': { title: '기자', stats: [1, 0, 1], skills: [
     ['특종', '턴 수가 5의 배수일 때 원한다면 자신의 살아 있는 모든 캐릭터를 이 카드의 위치로 모은다.'] ] },
   '고목': { title: '고목', tags: ['친수성'], stats: [1, 1, 1], skills: [
     ['뿌리 내리기', '이 카드는 (이동하지 않은 턴 수 + 1)을 전투력과 사거리로 가진다. (최대 4)'] ] },
-  '고목*': { title: '거대 고목', evo: true, tags: ['친수성'], stats: [1, 1, 1], skills: [
+  '고목*': { title: '고목★', evo: true, tags: ['친수성'], stats: [1, 1, 1], skills: [
     ['길고 빠르게 뿌리 내리기', '이 카드는 (이동하지 않은 턴 수 + 2)를 전투력과 사거리로 가진다. (최대 6)'] ] },
   '사신': { title: '사신', stats: [4, 4, 4], skills: [
     ['사의 기운', '이 카드가 살아 있는 한 자신의 주사위 눈을 4로 고정한다.'] ] },
@@ -6899,25 +6908,23 @@ const UNIT_INFO = {
   '고양이': { title: '사육사 (고양이의 모습)', stats: [0.9, 0, 1], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습으로 바꿀 수 있다.'],
     ['위대한 생존력', '이 카드는 전투에서 져도 사망 처리되지 않고 왕이 있는 칸으로 간다.'] ] },
-  '사육사*': { title: '사육사 (인간의 모습)', evo: true, stats: [1, 0, 1], skills: [
+  '사육사*': { title: '사육사★ (인간의 모습)', evo: true, stats: [1, 0, 1], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습(코끼리·개구리·고양이)으로 바꿀 수 있다.'] ] },
-  '코끼리*': { title: '사육사 (코끼리의 모습)', evo: true, tags: ['친수성'], stats: [3, 1, 2], skills: [
+  '코끼리*': { title: '사육사★ (코끼리의 모습)', evo: true, tags: ['친수성'], stats: [3, 1, 2], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습으로 바꿀 수 있다.'],
     ['웅덩이 만들기', '턴 수가 3의 배수일 때, 주변 2칸 안에서 친수성 태그가 없는 말이 없는 칸을 골라 물 웅덩이로 만든다. 물 웅덩이에는 친수성 태그가 있는 말만 들어갈 수 있고, 친수성 유닛은 물 웅덩이 위에서 전투력 +2, 사거리 +1이 된다.'] ] },
-  '개구리*': { title: '사육사 (개구리의 모습)', evo: true, tags: ['친수성'], stats: [0, 0, 1], skills: [
+  '개구리*': { title: '사육사★ (개구리의 모습)', evo: true, tags: ['친수성'], stats: [0, 0, 1], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습으로 바꿀 수 있다.'],
     ['위대한 울음소리', '주위 2칸 범위에 다른 참여자의 캐릭터가 진입하지 못하게 한다.'],
     ['독 제공', '자신의 다른 유닛이 이 유닛과 같은 칸에 잠시라도 있었다면, 그 유닛의 지원 전투력이 2배가 된다. 이 효과는 전투에 지원하면 사라진다.'] ] },
-  '고양이*': { title: '사육사 (고양이의 모습)', evo: true, stats: [1.1, 0, 1], skills: [
+  '고양이*': { title: '사육사★ (고양이의 모습)', evo: true, stats: [1.1, 0, 1], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습으로 바꿀 수 있다.'],
     ['위대한 생존력', '이 카드는 전투에서 져도 사망 처리되지 않고 왕이 있는 칸으로 간다.'] ] },
   '건축가': { title: '건축가', stats: [1, 0, 1], skills: [
-    ['성 쌓기', '턴 수가 2의 배수일 때 원한다면 이 카드의 위치에 성을 쌓는다. 성은 최대 5개이며, 6개째를 쌓으면 기존 성 중 하나가 제거된다. 성과 같은 칸에 있는 카드는 원한다면 다른 성으로 이동할 수 있다.'] ] },
-  '성': { title: '성', stats: [0, 0, 0], skills: [
-    ['부대 이동', '건축가가 쌓은 구조물. 성과 같은 칸에 있는 아군은 원한다면 다른 성으로 이동할 수 있다.'] ] },
+    ['성 쌓기', '턴 수가 2의 배수일 때 원한다면 이 카드의 위치에 성을 쌓는다. 성은 최대 5개이며, 6개째를 쌓으면 가장 오래된 성이 제거된다. 성과 같은 칸에 있는 카드는 원한다면 다른 성으로 이동할 수 있다.'] ] },
   '닌자': { title: '닌자', stats: [0.5, 5, 0.25], skills: [
     ['침투', '이 카드가 있는 칸에 이 카드만 있고 턴 수가 3의 배수일 때 사용할 수 있다. 사거리 안에 있는 다른 참여자의 카드 하나를 골라 이 카드와 위치를 바꾼다.'] ] },
-  '닌자*': { title: '숙련된 닌자', evo: true, stats: [0.5, 5, 0.25], skills: [
+  '닌자*': { title: '닌자★', evo: true, stats: [0.5, 5, 0.25], skills: [
     ['침투', '이 카드가 있는 칸에 이 카드만 있고 턴 수가 3의 배수일 때 사용할 수 있다. 사거리 안에 있는 다른 참여자의 카드 하나를 골라 이 카드와 위치를 바꾼다.'],
     ['연막', '전투에서 패배해도 제거되지 않고, 주변 2칸 안의 점유되지 않은 랜덤한 칸으로 이동한다. 모두 점유되어 있다면 왕이 있는 칸으로 이동한다.'] ] },
   '범고래': { title: '범고래', tags: ['친수성'], stats: [1, 1, 1], skills: [
@@ -6926,19 +6933,19 @@ const UNIT_INFO = {
     ['손님 받아라', '이 카드가 이동할 때 원한다면 같은 칸에 있는 다른 카드도 같이 이동한다.'] ] },
   '도박사': { title: '도박사', stats: [1, 0, 0.5], skills: [
     ['이동 에너지 도박', '턴 수가 2의 배수일 때 자신의 주사위 눈이 50% 확률로 1, 50% 확률로 12가 된다.'] ] },
-  '도박꾼': { title: '도박꾼', evo: true, stats: [1, 0, 0.5], skills: [
+  '도박꾼': { title: '도박사★', evo: true, stats: [1, 0, 0.5], skills: [
     ['이동 에너지 도박', '턴 수가 2의 배수일 때 자신의 이동 에너지가 25% 확률로 1, 75% 확률로 12가 된다.'] ] },
   '좀비': { title: '좀비', stats: [1, 0, 0.5], skills: [
     ['물어뜯기', '이 카드가 참여한 전투에서 승리하면, 패배한 상대 카드 중 하나를 랜덤하게 골라 자신의 카드로 만든다.'] ] },
   '의사': { title: '의사', stats: [0, 2, 1], skills: [
-    ['부활', '자신이 전투에서 패배했을 때, 그 전투가 이 카드의 사거리 안이면 80%, 아니면 20% 확률로 그 칸의 카드들이 제거되지 않고 이 카드의 위치로 이동한다. (이 카드가 패배한 전투에서는 발동하지 않는다)'] ] },
+    ['부활', '자신이 전투에서 패배했을 때, 그 전투가 이 카드와 같은 구역(판을 4개로 나눈 구역) 안이면 80%, 아니면 20% 확률로 그 칸의 카드들이 제거되지 않고 이 카드의 위치로 이동한다. (이 카드가 패배한 전투에서는 발동하지 않는다)'] ] },
   '눈사람': { title: '눈사람', stats: [0, 1, 1], skills: [
     ['스노우볼 굴리기', '눈덩이 2개가 사거리 안에 소환된다. 눈사람이 눈덩이가 있는 칸에 도달하면 전투력과 사거리가 1씩 증가하고, 눈덩이는 다른 곳에 재배치된다. (이미 말이 있는 칸에는 재배치되지 않는다)'] ] },
   '폼트랜서': { title: '폼트랜서', stats: [1, 1, 1], skills: [
     ['변신', '턴 수가 3의 배수일 때마다 게임판에 있는 말 중 하나를 골라 자신의 차례 동안 그 말로 변신한다.'] ] },
   '광대': { title: '광대', stats: [1, 0, 1], skills: [
     ['주의 끌기', '이 카드가 전투가 일어나는 칸에 있다면 전투 상대의 지원 전투력을 0으로 만든다.'] ] },
-  '광대*': { title: '어그로의 달인', evo: true, stats: [1, 0, 1], skills: [
+  '광대*': { title: '광대★', evo: true, stats: [1, 0, 1], skills: [
     ['광역 어그로', '이 카드를 보유한 플레이어가 참여하는 모든 전투에서 상대의 지원 전투력을 0으로 만든다.'] ] },
   '스키퍼': { title: '스키퍼', stats: [1, 0, 1], skills: [
     ['턴 스킵', '주사위에서 6 이상이 나오면 턴 수를 +1~5 할 수 있다.'] ] },
@@ -6961,7 +6968,7 @@ const UNIT_INFO = {
     ['블레이즈와 연결', '블레이즈와 같은 칸에 있을 때 사용할 수 있다. 엠버가 이동하는 칸으로 블레이즈가 따라온다. 블레이즈가 다른 칸으로 이동하면 연결이 해제된다.'] ] },
   '비숍': { title: '비숍', stats: [0.5, 0, 1], skills: [
     ['대각선 질주', '자신의 차례에 한 번, 대각선으로 몇 칸이든 이동할 수 있다. 단, 병사가 있는 칸을 지나갈 수는 없다.'] ] },
-  '비숍*': { title: '비숍', evo: true, stats: [0.5, 0, 1], skills: [
+  '비숍*': { title: '비숍★', evo: true, stats: [0.5, 0, 1], skills: [
     ['대각선 질주', '자신의 차례에 한 번, 대각선으로 몇 칸이든 이동할 수 있다. 단, 병사가 있는 칸을 지나갈 수는 없다. 이 스킬로 혼자 있는 다른 유닛과 같은 칸에 도착하면 그 유닛을 즉시 제거한다. (이번 차례에 이미 비숍을 움직였다면 적용되지 않는다)'] ] },
   '샤워기': { title: '샤워기', tags: ['친수성'], stats: [1, 0, 1], skills: [
     ['웅덩이 만들기', '턴 수가 3의 배수일 때, 주변 2칸 안에서 친수성 태그가 없는 말이 없는 칸을 골라 물 웅덩이로 만든다. 물 웅덩이에는 친수성 태그가 있는 말만 들어갈 수 있고, 친수성 유닛은 물 웅덩이 위에서 전투력 +2, 사거리 +1이 된다.'],
@@ -6989,6 +6996,7 @@ function renderUnitInfo() {
   const groups = new Map(); // key -> { unit, byTeam: Map(team -> count) }
   for (const u of players) {
     if (!(u.x >= 0 && u.y >= 0 && u.x < size && u.y < size)) continue;
+    if (isCastle(u)) continue; // 성(구조물)은 설명 대상 아님
     const key = unitInfoKey(u);
     if (!groups.has(key)) groups.set(key, { unit: u, byTeam: new Map() });
     const g = groups.get(key);
@@ -7012,12 +7020,11 @@ function renderUnitInfo() {
     const g = groups.get(key);
     const info = UNIT_INFO[key];
     const u = g.unit;
-    // 설명이 등록되지 않은 유닛(예: 산타클로스)은 현재 수치만 표시
+    // 설명이 등록되지 않은 유닛은 현재 수치만 표시
     const title = info ? info.title : u.name;
     const stats = info ? info.stats : [u.power ?? 0, u.range ?? 0, u.movement ?? 0];
     const tags = info?.tags || [];
     html += `<div class="ui-card"><div class="ui-title">${esc(title)}`;
-    if (info?.evo) html += `<span class="ui-badge ui-evo">진화</span>`;
     for (const t of tags) html += `<span class="ui-badge ui-tag">${esc(t)}</span>`;
     html += `</div>`;
     if (stats) {
@@ -7780,7 +7787,7 @@ function beginMerchantTrade(merchant) {
     const specialPool = [
       '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼',
       '의사','좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인',
-      '응원단장','트럭 운전사','블레이즈','엠버','개미','비숍','산타클로스','샤워기'
+      '응원단장','트럭 운전사','블레이즈','엠버','개미','비숍','샤워기'
     ];
     const pick = specialPool[Math.floor(Math.random() * specialPool.length)];
     newUnit = createSpecialUnitByName(pick, team);
