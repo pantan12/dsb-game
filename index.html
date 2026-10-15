@@ -660,6 +660,43 @@ function updateDraftWaitingStatus() {
 }
 
 let owners = {}; // 예: { "0": "peerA", "1": "peerB", ... }
+// 재접속 대비: PeerJS ID는 재접속할 때마다 바뀌므로, 탭마다 고정된 ID(cid)로 "누가 어느 팀인지"를 따로 기억한다.
+// (예전엔 연결이 잠깐 끊겨 새 ID로 재접속하면 팀 소유가 사라져 게임이 멈췄음)
+const myCid = (() => {
+  try {
+    let v = sessionStorage.getItem('dsb_cid');
+    if (!v) { v = Math.random().toString(36).slice(2, 10); sessionStorage.setItem('dsb_cid', v); }
+    return v;
+  } catch (e) { return Math.random().toString(36).slice(2, 10); }
+})();
+const cidByPeer = new Map(); // peerId -> cid
+let ownerCids = {};          // team -> cid (소유자가 잠시 끊겨도 지우지 않음)
+function cidOfPeer(pid) { return pid === myPeerId ? myCid : cidByPeer.get(pid); }
+function isPeerConnected(pid) { return !!pid && (pid === myPeerId || !!conns.get(pid)?.open); }
+// 현재 owners를 보고 ownerCids를 갱신(소유자가 없어진 팀의 cid는 남겨 둠)
+function refreshOwnerCids() {
+  for (const t of ['0', '1', '2', '3']) {
+    const pid = owners?.[t];
+    const cid = pid ? cidOfPeer(pid) : null;
+    if (cid) ownerCids[t] = cid;
+  }
+}
+// 같은 cid로 다시 들어온 사람에게 원래 팀을 돌려준다. 바뀌면 true
+function remapOwnersByCid() {
+  if (!owners) owners = {};
+  let changed = false;
+  for (const t of ['0', '1', '2', '3']) {
+    const cid = ownerCids[t];
+    if (!cid || isPeerConnected(owners[t])) continue;
+    const candidates = [myPeerId, ...conns.keys()].filter(pid => isPeerConnected(pid) && cidOfPeer(pid) === cid);
+    if (candidates.length && owners[t] !== candidates[0]) { owners[t] = candidates[0]; changed = true; }
+  }
+  return changed;
+}
+function mergeOwnerCids(incoming) {
+  if (!incoming || typeof incoming !== 'object') return;
+  for (const [t, cid] of Object.entries(incoming)) if (cid) ownerCids[t] = cid;
+}
 // 상태 동기화 충돌 방지용 버전(신규)
 let __stateVersion = 0;
 
@@ -811,7 +848,7 @@ function wirePeerEvents() {
     }
     
     // 내 닉네임과 현재 연결된 피어 목록 전송
-    broadcast({ t: 'HELLO', from: myPeerId, nick: myNick, peers: Array.from(conns.keys()) });
+    broadcast({ t: 'HELLO', from: myPeerId, nick: myNick, cid: myCid, peers: Array.from(conns.keys()) });
     updateDraftWaitingStatus();
 
     updateStartBtnLock();
@@ -860,9 +897,10 @@ function connectTo(hostPeerId) {
 }
 function setupConn(conn) {
   conns.set(conn.peer, conn);
+  const peerAtSetup = peer; // 재접속으로 Peer가 바뀐 뒤 들어오는 옛 연결의 이벤트는 무시하기 위함
   
   conn.on('open', () => {
-    conn.send({ t: 'HELLO', from: myPeerId, nick: getMyNick(), peers: Array.from(conns.keys()) });
+    conn.send({ t: 'HELLO', from: myPeerId, nick: getMyNick(), cid: myCid, peers: Array.from(conns.keys()) });
     conn.send({ t: 'ASK_SYNC', from: myPeerId });
     
     if (__hostId) conn.send({ t:'HOST', hostId: __hostId });
@@ -875,8 +913,18 @@ function setupConn(conn) {
   });
   
   conn.on('close', () => {
+  if (peer !== peerAtSetup) return; // 이미 새 Peer로 재접속한 뒤의 옛 연결
   conns.delete(conn.peer);
   nickMap.delete(conn.peer);
+  // 게스트: 호스트와의 연결이 끊기면 잠시 후 자동 재접속 (팀은 cid로 복구됨)
+  if (online && !__iAmCreator && roomCode && conn.peer === `${roomCode}-host`) {
+    mpStatus.textContent = `${roomCode} · 연결이 끊겨 재접속 중...`;
+    __joinRetryCount = 0;
+    const rc = roomCode;
+    setTimeout(() => {
+      if (online && !__iAmCreator && roomCode === rc && !conns.get(`${rc}-host`)?.open) createGuestPeer();
+    }, 1500);
+  }
 
   // 해당 피어가 맡고 있던 팀 소유권 제거
   if (owners) {
@@ -920,7 +968,40 @@ function autoAssignOwnerFor(peerId){
     }
   }
 }
+// 게임 진행 중(드래프트/배치/모드 선택이 아닐 때)인지
+function isInPlayPhase() {
+  return !(specialDraft?.active || randomDraft?.active || deploy?.active || modeSelect?.active || winModeSelect?.active);
+}
+// 상태 재전송 요청(ASK_SYNC)에 응답할 사람: 게임 중엔 현재 차례 팀의 주인(가장 최신 상태를 가진 사람), 아니면 앵커
+function syncAuthorityId() {
+  const owner = owners?.[String(currentTurn)];
+  const ownerOnline = owner && (owner === myPeerId || conns.get(owner)?.open);
+  return (isInPlayPhase() && ownerOnline) ? owner : anchorId();
+}
+// 동기화 대상 상태를 비교용 문자열로(버전 제외)
+let __lastSyncedKey = null;
+function currentStateKey() {
+  return JSON.stringify(toRoomStateNoVersion());
+}
+// 내 차례에 내가 바꾼 상태가 아직 전송되지 않았으면 SYNC를 보낸다.
+// (진화·사육사 변신·닌자 침투·기자 소집 등 SYNC를 따로 보내지 않던 동작을 한꺼번에 처리)
+function autoSyncIfChanged() {
+  if (!online || !myPeerId || conns.size === 0) return;
+  if (!isInPlayPhase() || !awaitGetIsMyTurn()) return;
+  if (currentStateKey() === __lastSyncedKey) return;
+  broadcast({ t: 'SYNC', state: toRoomState(), hash: hashState() });
+}
+['click', 'keyup', 'pointerup', 'drop'].forEach(ev =>
+  document.addEventListener(ev, () => setTimeout(autoSyncIfChanged, 0), true));
+setInterval(autoSyncIfChanged, 1500); // 입력 없이 바뀐 경우 대비
+
 function broadcast(msg) {
+  if (msg && msg.t === 'OWNERS') { refreshOwnerCids(); msg.ownerCids = ownerCids; }
+  if (msg && msg.t === 'SYNC') {
+    if (__applyingRemote) return; // 원격 액션 재생 중 에코 금지
+    if (msg.state) msg.state.version = nextStateVersion(); // 보낼 때만 버전 증가
+    try { __lastSyncedKey = currentStateKey(); } catch(e){}
+  }
   for (const c of conns.values()) {
     if (c && c.open) {
       try {
@@ -1212,11 +1293,24 @@ function chosenIdsForTeam(team){
   return out;
 }
 
+// 원격 액션(ROLL/ENDTURN 등)을 재생하는 동안에는 SYNC를 다시 내보내지 않는다(에코로 인한 상태 덮어쓰기 방지)
+let __applyingRemote = false;
+function nextStateVersion() {
+  // 기기마다 시계가 달라도, 받은 적 있는 가장 큰 버전보다 항상 크게 → 시계가 느린 기기의 SYNC가 무시되던 문제 해결
+  __stateVersion = Math.max(Date.now(), __stateVersion + 1);
+  return __stateVersion;
+}
+function toRoomStateNoVersion(){
+  const st = toRoomState();
+  delete st.version;
+  return st;
+}
 function toRoomState(){
   return {
     status: 'playing',
-    version: Date.now(),
+    version: __stateVersion, // 실제 전송 시 broadcast()에서 새 버전을 매김
     owners, // 팀 소유자 동기화
+    ownerCids: (refreshOwnerCids(), ownerCids),
     size,
     players, currentTurn, currentRound,
     moveEnergy, diceRolledThisTurn, lastDiceRoll,
@@ -1253,6 +1347,9 @@ function toRoomState(){
     winModeSelect, winMode,
     teamGold, tycoonPowerBonus, tycoonMoveMult, tycoonBuys, tycoonBossActive,
     teleportPick: { active: teleportPick.active, team: teleportPick.team, unitId: teleportPick.unitId },
+    // 이후 추가된 기능의 상태(예전엔 동기화되지 않았음)
+    waterPuddles, teamScores, gameEnded, scoreResetDone10, scoreResetDone20,
+    evolutionUsed, ninjaSwappedThisTurn, hasMovedThisTurn,
   };
 }
 function applyRoomState(s){
@@ -1268,6 +1365,8 @@ function applyRoomState(s){
   // 온라인: 팀 소유자 동기화
   if (s.owners) {
     owners = s.owners;
+    mergeOwnerCids(s.ownerCids);
+    remapOwnersByCid();
     try { renderTeamSlots?.(); } catch(e){}
   }
 
@@ -1334,6 +1433,15 @@ try {
 
   Object.assign(teleportPick, s.teleportPick || { active: false, team: null, unitId: null });
 
+  if (Array.isArray(s.waterPuddles)) waterPuddles.splice(0, waterPuddles.length, ...s.waterPuddles);
+  if (Array.isArray(s.teamScores)) teamScores.splice(0, teamScores.length, ...s.teamScores);
+  if (typeof s.gameEnded === 'boolean') gameEnded = s.gameEnded;
+  if (typeof s.scoreResetDone10 === 'boolean') scoreResetDone10 = s.scoreResetDone10;
+  if (typeof s.scoreResetDone20 === 'boolean') scoreResetDone20 = s.scoreResetDone20;
+  if (Array.isArray(s.evolutionUsed)) evolutionUsed.splice(0, evolutionUsed.length, ...s.evolutionUsed);
+  if (typeof s.ninjaSwappedThisTurn === 'boolean') ninjaSwappedThisTurn = s.ninjaSwappedThisTurn;
+  if (typeof s.hasMovedThisTurn === 'boolean') hasMovedThisTurn = s.hasMovedThisTurn;
+
   diceResult.textContent = diceRolledThisTurn ? `🎲 주사위 결과: ${lastDiceRoll ?? ''}` : '';
   moveEnergyDisplay.textContent = `남은 이동 에너지: ${moveEnergy}`;
   if (turnDisplay) turnDisplay.innerText = `턴: ${currentRound}`;
@@ -1341,6 +1449,7 @@ try {
   drawBoard();
   if (specialDraft?.active) renderSpecialDraft();
   if (randomDraft?.active)  renderRandomDraft();
+  try { __lastSyncedKey = currentStateKey(); } catch(e){}
 }
 function startDeploymentPhase() {
   deploy.active = true;
@@ -1549,21 +1658,21 @@ function advanceDeployTeam() {
   if (diceRolledThisTurn) return;
   if (!isTeamAlive?.(currentTurn)) return;
 
-  // 결과 생성
-  const result = Math.floor(Math.random() * 6) + 1;
+  // 결과 생성(사신/도박사 보정까지 여기서 끝냄)
+  const result = finalizeDiceResult(Math.floor(Math.random() * 6) + 1);
 
   if (online) {
     if (!awaitGetIsMyTurn()) { status.textContent='내 차례가 아닙니다'; return; }
     const action = makeAction('ROLL', { result });
     // 로컬 즉시 적용
-    applyRoll(result);
+    applyRoll(result, true);
     action.post = hashState();
     broadcast(action);
     return;
   }
 
   // 오프라인
-  applyRoll(result);
+  applyRoll(result, true);
 };
 // ✅ 추가: 간단 스냅샷(최근 30개)
 const __history = [];
@@ -2655,10 +2764,18 @@ function updatePuppeteerTeamTags() {
   const ok = confirm('정말 항복하시겠습니까?');
   if (!ok) return;
   const king = players.find(p => p.team === currentTurn && p.name === '왕');
-  if (!king) return;
   selectedPlayerId = null;
-  removePlayer(king, /*suppressMsg=*/false);
-  endTurn();
+  if (king) {
+    removePlayer(king, /*suppressMsg=*/false);
+  } else {
+    // 왕이 없는 모드(점령전/타이쿤): 항복한 팀의 말을 모두 제거 (예전엔 아무 일도 일어나지 않았음)
+    const team = currentTurn;
+    for (let i = players.length - 1; i >= 0; i--) if (players[i].team === team) players.splice(i, 1);
+    defeatMsg.textContent = `플레이어 ${team + 1}가 항복했습니다`;
+    defeatMsg.style.display = 'block';
+    setTimeout(() => { defeatMsg.style.display = 'none'; }, 3000);
+  }
+  endTurn(); // endTurn 끝에서 온라인 SYNC가 전송됨
 });
 })();
   function selectPiece(piece) {
@@ -4508,6 +4625,19 @@ function buffAntsForQueen(queen, delta){
   });
 }
 function askPlayerCountAndCullTeams() {
+  // 온라인: 플레이어 수를 묻지 않고, 실제로 점유된 팀만 남긴다.
+  // (예전엔 2인이면 무조건 1P·3P만 남겨서, 2P를 점유한 사람의 팀이 지워지고 팀을 다시 골라야 했음)
+  if (online) {
+    const owned = [0, 1, 2, 3].filter(t => owners && owners[String(t)]);
+    if (owned.length >= 2) {
+      for (let i = players.length - 1; i >= 0; i--) {
+        if (players[i].team >= 0 && players[i].team <= 3 && !owned.includes(players[i].team)) players.splice(i, 1);
+      }
+      resetTurnToFirstAlive();
+      drawBoard();
+      return;
+    }
+  }
   let cnt = null;
   while (cnt === null) {
     const input = prompt('플레이어 수를 선택하세요 (2, 3, 4):', '4');
@@ -6086,8 +6216,9 @@ function makeRandomPool() {
   }
   return remain.slice(0, need);
 }
-function applyRoll(result){
-  pushSnapshot('roll');
+// 사신(4 고정)/도박사(1 또는 12) 보정을 적용한 최종 주사위 값.
+// 온라인에서는 굴린 사람만 이 함수를 호출하고 최종 값을 보내, 모두가 같은 값을 쓰게 한다.
+function finalizeDiceResult(result){
   if (hasReaper?.(currentTurn)) {
     result = 4;
   }
@@ -6096,6 +6227,12 @@ function applyRoll(result){
     const p12 = evolved ? 0.75 : 0.5;
     result = (Math.random() < p12) ? 12 : 1;
   }
+  return result;
+}
+// alreadyFinal: true면 보정 없이 그대로 사용(원격에서 받은 최종 값 등)
+function applyRoll(result, alreadyFinal = false){
+  pushSnapshot('roll');
+  if (!alreadyFinal) result = finalizeDiceResult(result);
 
   // ★ 중요: 위 조작을 전부 반영한 "최종 결과"를 저장해야 스키퍼 조건(lastDiceRoll >= 6)이 정상 동작함
   lastDiceRoll = result;
@@ -6255,6 +6392,13 @@ function onNetMsg(msg){
       case 'HELLO': {
         if (msg.from) {
           if (msg.nick) nickMap.set(msg.from, msg.nick);
+          if (msg.cid) {
+            cidByPeer.set(msg.from, msg.cid);
+            if (remapOwnersByCid()) {
+              renderTeamSlots?.();
+              broadcast({ t: 'OWNERS', owners });
+            }
+          }
           
           if (Array.isArray(msg.peers)) {
             for (const peerId of msg.peers) {
@@ -6290,7 +6434,10 @@ function onNetMsg(msg){
       }
       
       case 'ASK_SYNC': {
-        if (myPeerId === anchorId()) {
+        const auth = syncAuthorityId();
+        const responder = (auth !== msg.from) ? auth
+          : [...conns.keys(), myPeerId].filter(x => x && x !== msg.from).sort()[0];
+        if (myPeerId === responder) {
           broadcast({ t:'SYNC', state: toRoomState(), hash: hashState() });
         }
         break;
@@ -6306,6 +6453,8 @@ function onNetMsg(msg){
       }
       case 'OWNERS': {
   owners = msg.owners || owners || {};
+  mergeOwnerCids(msg.ownerCids);
+  if (remapOwnersByCid()) { try { broadcast({ t:'OWNERS', owners }); } catch(e){} }
   // 단일팀 소유 규칙 유지
   enforceSingleTeamOwnership();
   renderTeamSlots();
@@ -6328,16 +6477,22 @@ function onNetMsg(msg){
         }
         if (owners?.[String(currentTurn)] && owners[String(currentTurn)] !== msg.from) return;
         
-        if (msg.type === 'ROLL') {
-          const r = msg.payload?.result ?? 1;
-          applyRoll(r);
-        } else if (msg.type === 'MOVE') {
-          handleRemoteMove?.(msg.payload);
-        } else if (msg.type === 'SKILL') {
-          handleRemoteSkill?.({ ...msg.payload, from: msg.from });
-        } else if (msg.type === 'ENDTURN') {
-          endTurn();
+        __applyingRemote = true;
+        try {
+          if (msg.type === 'ROLL') {
+            const r = msg.payload?.result ?? 1;
+            applyRoll(r, true); // 보낸 쪽에서 사신/도박사 보정까지 끝난 최종 결과 → 다시 굴리지 않음
+          } else if (msg.type === 'MOVE') {
+            handleRemoteMove?.(msg.payload);
+          } else if (msg.type === 'SKILL') {
+            handleRemoteSkill?.({ ...msg.payload, from: msg.from });
+          } else if (msg.type === 'ENDTURN') {
+            endTurn();
+          }
+        } finally {
+          __applyingRemote = false;
         }
+        try { __lastSyncedKey = currentStateKey(); } catch(e){}
         break;
       }
       
