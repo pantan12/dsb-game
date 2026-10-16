@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>다수가 승리하는 법</title>
+  <script src="https://cdn.tailwindcss.com"></script>
   <script>
   tailwind.config = {
     safelist: [
@@ -13,7 +14,6 @@
     ]
   }
 </script>
-  <script src="https://cdn.tailwindcss.com"></script>
   <style>
   /* === 반응형 셀 크기 & 스크롤 가능 래퍼 === */
 :root { --cell: 4rem; }                 /* 기본 PC 셀 크기 */
@@ -472,6 +472,8 @@ body { padding-bottom: 4.5rem; }
       <button id="surrenderBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold">항복</button>
       <!-- 되돌리기 버튼: 화면에서는 숨김(코드/기능은 유지) --><button id="undoBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold" style="display:none" hidden>되돌리기</button>
       <button id="deselectBtn" class="px-3 py-2 rounded bg-gray-700 text-white font-bold">선택 해제</button>
+      <!-- 모바일용: 키보드 P키와 같은 동작(스킬 대상 선택 취소 / 선택한 내 성 철거). 해당될 때만 보임 -->
+      <button id="pKeyBtn" class="px-3 py-2 rounded bg-slate-600 text-white font-bold" style="display:none">취소 (P)</button>
     </div>
     <div class="flex items-center gap-4 font-semibold">
       <span id="diceResult"> </span>
@@ -1282,6 +1284,8 @@ let teleportStaged = {}; // unitId -> targetTeam(0~3)
 // 왕좌 쟁탈전: 텔레포트 팝업에서 한 칸에 유닛이 여러 기 겹쳐 있을 때 "고르는 중"인 칸 / 이미 고른 유닛 — 로컬 전용
 let teleportStackOpenKey = null;     // "x,y" 또는 null
 let teleportArmedUnitByKey = {};     // "x,y" -> unitId
+// 왕좌 쟁탈전: 텔레포트 팝업에서 "탭으로 고른" 유닛(모바일: 유닛 탭 → 구역 탭) — 로컬 전용
+let teleportSelectedId = null;
 // 왕좌 쟁탈전: 보드 뷰(줌) 상태 — 클라이언트 로컬 UI 전용, 절대 toRoomState에 포함하지 않음
 let boardViewZone = 'MAIN'; // 'MAIN' | 0 | 1 | 2 | 3
 // ===== 온라인: 현재 게임상태 → 문서 / 문서 → 게임상태 =====
@@ -2721,8 +2725,29 @@ for (let i = 0; i < gifts.length; i++) {
 
   // 왕좌 쟁탈전 4분할: 구역 탭 바 갱신 + 턴 시작 텔레포트 팝업 오픈
   renderZoneTabBar();
+  updatePKeyBtn();
   if (teleportPick.active) openTeleportPrompt(teleportPick.team);
 }
+// 키보드가 없는 모바일에서도 P키 기능(스킬 대상 선택 취소 / 성 철거)을 쓸 수 있도록 버튼 표시 갱신
+function updatePKeyBtn() {
+  const btn = document.getElementById('pKeyBtn');
+  if (!btn) return;
+  let label = '';
+  try {
+    const piece = selectedPlayerId ? players.find(p => p.id === selectedPlayerId) : null;
+    if (ninjaSwap.active || cartLink.active || puppetSwap.active || castleMove.active || castleMove.pickingTarget) label = '✖ 스킬 취소 (P)';
+    else if (piece && piece.team === currentTurn && isCastle(piece)) label = '🏚 성 철거 (P)';
+  } catch (e) { /* 초기화 전 */ }
+  btn.style.display = label ? '' : 'none';
+  if (label) btn.textContent = label;
+}
+document.getElementById('pKeyBtn')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', bubbles: true }));
+  updatePKeyBtn();
+});
+// 스킬 시작(닌자 스왑 등)은 drawBoard 없이 상태만 바뀌는 경우가 있어 입력 직후에도 갱신
+['click', 'keyup'].forEach(ev => document.addEventListener(ev, () => setTimeout(updatePKeyBtn, 0), true));
 // 샤워기 패시브 '수압 증가': 물 웅덩이 위 또는 바로 주변 한 칸이면 전:4/사:3, 아니면 기본 전:1/사:1로 복귀
 function updateShowerPressureBuff() {
   for (const u of players) {
@@ -5414,6 +5439,7 @@ function maybeStartTeleportPhase(team) {
   teleportStaged = {};
   teleportStackOpenKey = null;
   teleportArmedUnitByKey = {};
+  teleportSelectedId = null;
 }
 
 // 왕좌 쟁탈전 4분할: 구역 탭 바(MAIN/1P/2P/3P/4P) 렌더링 — king 모드에서만 보임
@@ -5455,7 +5481,7 @@ function openTeleportPrompt(team) {
   sub.style.fontSize = '11px';
   sub.style.color = '#6b7280';
   sub.style.margin = '0';
-  sub.textContent = '겹친 칸은 숫자를 눌러 하나를 고른 뒤 드래그하세요. 다 고르면 확인!';
+  sub.textContent = '유닛을 구역으로 드래그하거나, 유닛을 탭한 뒤 구역을 탭하세요. 겹친 칸은 숫자를 눌러 하나를 고르세요. 다 고르면 확인!';
   header.appendChild(title); header.appendChild(sub);
   popup.appendChild(header);
 
@@ -5486,8 +5512,9 @@ function openTeleportPrompt(team) {
     delete teleportStaged[unitId];
     openTeleportPrompt(team);
   };
+  square.dataset.tpSquare = '1';
   square.onclick = () => {
-    if (teleportStackOpenKey) { teleportStackOpenKey = null; openTeleportPrompt(team); }
+    if (teleportStackOpenKey || teleportSelectedId) { teleportStackOpenKey = null; teleportSelectedId = null; openTeleportPrompt(team); }
   };
 
   const myUnits = players.filter(p => p.team === team && p.name !== '왕' && p.x >= 0 && p.y >= 0 && !isCastle(p) && !p._teleportLockThisTurn && teleportStaged[p.id] === undefined);
@@ -5524,9 +5551,21 @@ function openTeleportPrompt(team) {
     });
     dot.ondragstart = (e) => { e.dataTransfer.setData('text/plain', u.id); dot.style.opacity = '0.4'; };
     dot.ondragend = () => { dot.style.opacity = '1'; };
-    if (onReopen) {
-      dot.onclick = (e) => { e.stopPropagation(); onReopen(); };
+    // 탭으로 고르기(모바일은 HTML5 드래그앤드롭이 동작하지 않음): 유닛 탭 → 구역 칸 탭
+    if (teleportSelectedId === u.id) {
+      Object.assign(dot.style, {
+        boxShadow: '0 0 0 3px #facc15, 0 2px 6px rgba(0,0,0,0.45)',
+        transform: 'scale(1.25)', zIndex: '15'
+      });
     }
+    dot.onclick = (e) => {
+      e.stopPropagation();
+      // 겹친 칸에서 고른 유닛을 이미 선택해 둔 상태로 다시 누르면 목록을 다시 연다
+      if (onReopen && teleportSelectedId === u.id) { teleportSelectedId = null; onReopen(); return; }
+      teleportSelectedId = (teleportSelectedId === u.id) ? null : u.id;
+      openTeleportPrompt(team);
+    };
+    attachTeleportTouchDrag(dot, u.id, team);
     return dot;
   };
 
@@ -5580,6 +5619,7 @@ function openTeleportPrompt(team) {
         item.onclick = (e) => {
           e.stopPropagation();
           teleportArmedUnitByKey[key] = u.id;
+          teleportSelectedId = u.id; // 고르자마자 선택 상태 → 바로 구역을 탭하면 이동
           teleportStackOpenKey = null;
           openTeleportPrompt(team);
         };
@@ -5636,7 +5676,20 @@ function openTeleportPrompt(team) {
       e.preventDefault();
       box.style.boxShadow = '0 1px 2px rgba(0,0,0,0.08)'; box.style.transform = 'scale(1)';
       const unitId = e.dataTransfer.getData('text/plain');
-      teleportStaged[unitId] = t;
+      if (unitId) teleportStaged[unitId] = t;
+      if (teleportSelectedId === unitId) teleportSelectedId = null;
+      openTeleportPrompt(team);
+    };
+    box.dataset.tpZone = String(t);
+    if (teleportSelectedId) {
+      box.style.cursor = 'pointer';
+      box.style.boxShadow = `0 0 0 2px ${theme.border}`;
+    }
+    box.onclick = (e) => {
+      e.stopPropagation();
+      if (!teleportSelectedId) return;
+      teleportStaged[teleportSelectedId] = t;
+      teleportSelectedId = null;
       openTeleportPrompt(team);
     };
 
@@ -5658,7 +5711,8 @@ function openTeleportPrompt(team) {
       chip.style.fontWeight = '600';
       chip.style.color = theme.text;
       chip.style.cursor = 'pointer';
-      chip.onclick = () => { delete teleportStaged[uid]; openTeleportPrompt(team); };
+      chip.style.padding = '2px 6px'; // 손가락으로 누르기 쉽게
+      chip.onclick = (e) => { e.stopPropagation(); delete teleportStaged[uid]; openTeleportPrompt(team); };
       box.appendChild(chip);
     });
 
@@ -5689,6 +5743,69 @@ function openTeleportPrompt(team) {
   popup.style.display = 'block';
 }
 
+// 텔레포트 팝업: 터치 드래그 지원(모바일 브라우저는 HTML5 draggable/ondrop을 터치로 발생시키지 않음).
+// 손가락을 일정 거리 이상 움직이면 유닛 복제본이 손가락을 따라오고, 뗀 지점의 구역 칸(data-tp-zone)에 배정한다.
+// 거의 안 움직이고 떼면 일반 탭(click)으로 처리 → 탭 선택 방식으로 동작.
+function attachTeleportTouchDrag(dot, unitId, team) {
+  let sx = 0, sy = 0, ghost = null, dragging = false, hoverBox = null;
+  const zoneAt = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    return el ? el.closest('[data-tp-zone]') : null;
+  };
+  const setHover = (box) => {
+    if (hoverBox === box) return;
+    if (hoverBox) { hoverBox.style.transform = 'scale(1)'; hoverBox.style.outline = ''; }
+    hoverBox = box;
+    if (hoverBox) { hoverBox.style.transform = 'scale(1.04)'; hoverBox.style.outline = '3px solid #facc15'; }
+  };
+  const cleanup = () => {
+    if (ghost) ghost.remove();
+    ghost = null; dragging = false;
+    setHover(null);
+    dot.style.opacity = '1';
+  };
+  dot.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+    dragging = false;
+  }, { passive: true });
+  dot.addEventListener('touchmove', (e) => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    if (!dragging) {
+      if (Math.abs(t.clientX - sx) + Math.abs(t.clientY - sy) < 8) return;
+      dragging = true;
+      const r = dot.getBoundingClientRect();
+      ghost = dot.cloneNode(true);
+      Object.assign(ghost.style, {
+        position: 'fixed', left: '0px', top: '0px', margin: '0',
+        width: r.width + 'px', height: r.height + 'px',
+        transform: 'scale(1.3)', opacity: '0.9', pointerEvents: 'none', zIndex: '99999'
+      });
+      document.body.appendChild(ghost);
+      dot.style.opacity = '0.4';
+    }
+    e.preventDefault(); // 드래그 중 화면 스크롤 방지
+    const w = ghost.offsetWidth, h = ghost.offsetHeight;
+    ghost.style.left = (t.clientX - w / 2) + 'px';
+    ghost.style.top = (t.clientY - h / 2) + 'px';
+    setHover(zoneAt(t.clientX, t.clientY));
+  }, { passive: false });
+  dot.addEventListener('touchend', (e) => {
+    if (!dragging) return; // 탭 → click 핸들러가 처리
+    e.preventDefault();    // 드래그 후 따라오는 합성 click 방지
+    const t = e.changedTouches[0];
+    const box = t ? zoneAt(t.clientX, t.clientY) : null;
+    cleanup();
+    if (box) {
+      teleportStaged[unitId] = Number(box.dataset.tpZone);
+      if (teleportSelectedId === unitId) teleportSelectedId = null;
+    }
+    openTeleportPrompt(team);
+  }, { passive: false });
+  dot.addEventListener('touchcancel', cleanup);
+}
+
 function applyStagedTeleports(team) {
   for (const [unitId, targetTeam] of Object.entries(teleportStaged)) {
     const u = players.find(p => p.id === unitId);
@@ -5707,6 +5824,7 @@ function closeTeleportPrompt() {
   teleportStaged = {};
   teleportStackOpenKey = null;
   teleportArmedUnitByKey = {};
+  teleportSelectedId = null;
   popup.dataset.lock = '0';
   popup.style.display = 'none';
   popup.style.maxWidth = '';
