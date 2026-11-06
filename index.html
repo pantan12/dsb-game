@@ -1468,6 +1468,13 @@ try {
   drawBoard();
   if (specialDraft?.active) renderSpecialDraft();
   if (randomDraft?.active)  renderRandomDraft();
+  // 랜덤 드래프트가 다른 사람 화면에서 끝났으면 내 선택창도 닫고 게임 시작
+  else if (popup.dataset.randomDraft) {
+    delete popup.dataset.randomDraft;
+    popup.style.display = 'none';
+    if (typeof maybeStartTeleportPhase === 'function') maybeStartTeleportPhase(currentTurn);
+    drawBoard();
+  }
   try { __lastSyncedKey = currentStateKey(); } catch(e){}
 }
 function startDeploymentPhase() {
@@ -6194,15 +6201,25 @@ function beginRandomDraft(){
   }
   renderRandomDraft();
 }
+// 온라인: 해당 팀 소유자만 선택 가능(소유자가 없는 팀은 앵커가 대신 선택)
+function canPickRandomDraft(t){
+  if (!online) return true;
+  const owner = owners?.[String(t)];
+  return owner ? owner === myPeerId : isAnchor();
+}
 function renderRandomDraft(){
   const t = randomDraft.order[randomDraft.idx]; // 현재 선택할 팀
+  const canPick = canPickRandomDraft(t);
+  popup.dataset.randomDraft = '1';
   popup.innerHTML = `<p class="font-bold mb-2">랜덤 드래프트 - 플레이어 ${t+1} 선택</p>`;
+  if (!canPick) popup.innerHTML += `<p class="text-sm opacity-80 mb-2">플레이어 ${t+1}이(가) 선택 중입니다…</p>`;
   randomDraft.pool.forEach(name=>{
     const btn = document.createElement('button');
     btn.type='button';
     btn.className='block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
     btn.textContent = name;
-    btn.onclick = () => pickRandomDraft(name);
+    if (canPick) btn.onclick = () => pickRandomDraft(name);
+    else { btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'default'; }
     popup.appendChild(btn);
   });
   // ▼ 중앙 배치: "보드" 기준
@@ -6222,6 +6239,7 @@ function renderRandomDraft(){
 }
 function pickRandomDraft(name){
   const t = randomDraft.order[randomDraft.idx];
+  if (!randomDraft.active || !canPickRandomDraft(t) || !randomDraft.pool.includes(name)) return;
   // 말 생성 (블레이즈 & 엠버는 일반 드래프트처럼 블레이즈/엠버 두 유닛으로 나뉘어 등장)
   if (name === '블레이즈 & 엠버') {
     const p = getTeamStartPos(t);
@@ -6246,25 +6264,38 @@ function pickRandomDraft(name){
       randomDraft.pool  = makeRandomPool();
       // 남은 특수 병사가 0이면 조기 종료
       if (randomDraft.pool.length === 0) {
-        randomDraft.active = false;
-        popup.style.display = 'none';
-        if (typeof maybeStartTeleportPhase === 'function') maybeStartTeleportPhase(currentTurn);
-        drawBoard();
+        finishRandomDraft();
         return;
       }
+      syncRandomDraft();
       renderRandomDraft();
       return;
     }
     // 마지막 라운드 종료
-    randomDraft.active = false;
-    popup.style.display = 'none';
-    status && (status.textContent = '게임을 시작합니다!');
-    if (typeof maybeStartTeleportPhase === 'function') maybeStartTeleportPhase(currentTurn);
-    drawBoard();
+    finishRandomDraft();
     return;
   }
   // 라운드 진행 중
+  syncRandomDraft();
   renderRandomDraft();
+}
+// 온라인: 선택할 때마다 전체에 상태 배포(다른 사람 화면의 선택창/말 갱신)
+function syncRandomDraft(){
+  if (!online) return;
+  const state = toRoomState();
+  broadcast({ t: 'SYNC', state, hash: hashState() });
+}
+function finishRandomDraft(){
+  randomDraft.active = false;
+  delete popup.dataset.randomDraft;
+  popup.style.display = 'none';
+  syncSnowballsToSnowmen();
+  status && (status.textContent = '게임을 시작합니다!');
+  clearCheerBuffsForTeam(currentTurn);
+  applyCheerBuffsForTeam(currentTurn);
+  syncRandomDraft();
+  if (typeof maybeStartTeleportPhase === 'function') maybeStartTeleportPhase(currentTurn);
+  drawBoard();
 }
 // 팀별 1회 제한
 const evolutionUsed = [false, false, false, false];
