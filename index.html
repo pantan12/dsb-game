@@ -1265,6 +1265,7 @@ const shopMenuBtn = document.getElementById('shopMenuBtn');
 const randomDraft = {
   active: false,
   round: 0,             // 0~3
+  teams: [0,1,2,3],     // 참가 팀(2~4명)
   order: [0,1,2,3],
   idx: 0,
   pool: [],
@@ -1429,7 +1430,7 @@ try {
   }
 } catch(e){}
 
-  Object.assign(randomDraft,  s.randomDraft ||{active:false, round:0, order:[0,1,2,3], idx:0, pool:[], taken:[]});
+  Object.assign(randomDraft,  s.randomDraft ||{active:false, round:0, teams:[0,1,2,3], order:[0,1,2,3], idx:0, pool:[], taken:[]});
   randomDraft.taken = new Set((s.randomDraft?.taken)||[]);
 
   Object.assign(deploy, s.deploy||{active:false, order:[3,2,1,0], idx:0});
@@ -5378,10 +5379,12 @@ function startDraftModeSelection() {
   };
   const randomBtn = document.createElement('button');
   randomBtn.className = 'block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black';
-  randomBtn.textContent = '랜덤 드래프트 모드 (4인 고정)';
+  randomBtn.textContent = '랜덤 드래프트 모드';
   randomBtn.onclick = () => {
     gameMode = 'random';
     winModeSelect.active = false;
+    popup.style.display = 'none';
+    askPlayerCountAndCullTeams();
     resetTurnToFirstAlive();
     beginRandomDraft();
 
@@ -6189,6 +6192,7 @@ function applyCheerBuffsForTeam(team){
 function beginRandomDraft(){
   randomDraft.active = true;
   randomDraft.round  = 0;
+  randomDraft.teams  = getActiveTeams();   // 참가 팀(플레이어 수만큼)
   randomDraft.order  = rotatedOrder(0);
   randomDraft.idx    = 0;
   randomDraft.taken  = new Set();
@@ -6255,7 +6259,7 @@ function pickRandomDraft(name){
   // 다음 플레이어
   randomDraft.idx++;
   // 라운드 종료?
-  if (randomDraft.idx >= 4) {
+  if (randomDraft.idx >= randomDraft.order.length) {
     // 다음 라운드 존재(총 4라운드)
     if (randomDraft.round < 3) {
       randomDraft.round += 1;
@@ -6372,11 +6376,16 @@ function addBlazeEmberSeeds(){
     players.push(createSpecialUnitByName('블레이즈 & 엠버', team));
   }
 }
-function rotatedOrder(start) { return [0,1,2,3].map((_,i)=> (start + i) % 4); }
+// 참가 팀만 돌아가며 선택 순서를 정함(라운드마다 시작 팀이 한 칸씩 밀림)
+function rotatedOrder(start) {
+  const teams = randomDraft.teams?.length ? randomDraft.teams : [0,1,2,3];
+  return teams.map((_,i)=> teams[(start + i) % teams.length]);
+}
 function makeRandomPool() {
   const remain = ALL_SPECIAL_NAMES.filter(n => n !== '산타클로스' && !randomDraft.taken.has(n));
-  // 남은 개수가 4 미만인 경우: 가능한 만큼만 제시(이 경우 자동으로 드래프트가 조기 종료될 수 있음)
-  const need = Math.min(4, remain.length);
+  // 플레이어 수만큼 제시. 남은 개수가 부족하면 가능한 만큼만(이 경우 자동으로 드래프트가 조기 종료될 수 있음)
+  const n = randomDraft.teams?.length || 4;
+  const need = Math.min(n, remain.length);
   for (let i = remain.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [remain[i], remain[j]] = [remain[j], remain[i]];
@@ -7029,7 +7038,7 @@ function roomSkeleton(){
     formTrans:{picking:false,trancerId:null},
     keeperChoice:{active:false,keeperId:null},
     specialDraft:{active:false, chosenCount:[0,0,0,0], chosenIds:[], focusId:null, team:0},
-    randomDraft:{active:false, round:0, order:[0,1,2,3], idx:0, pool:[], taken:[]},
+    randomDraft:{active:false, round:0, teams:[0,1,2,3], order:[0,1,2,3], idx:0, pool:[], taken:[]},
     deploy:{active:false, order:[3,2,1,0], idx:0, queueByTeam:{}, startPos:{}},
     modeSelect:{active:false},
     gameMode:null,
