@@ -2551,6 +2551,25 @@ function makeOnCellClick(x, y, onCellPlayers) {
     }
   }
 
+  // 선택한 유닛이 사거리로 전투력을 지원할 수 있는 칸(맨해튼 거리 ≤ 사거리, 자기 칸 제외)
+  // 왕이 있는 칸의 전투는 사거리 지원을 인정하지 않으므로 제외
+  let supportRangeSet = null;
+  if (typeof selectedPlayerId !== 'undefined' && selectedPlayerId) {
+    const sel = players.find(p => p.id === selectedPlayerId);
+    const r = Number(sel?.range ?? 0);
+    if (sel && r > 0 && sel.x >= 0 && sel.y >= 0 && !(typeof isCastle === 'function' && isCastle(sel))) {
+      const kingCells = new Set(players.filter(p => p.name === '왕' && p.x >= 0 && p.y >= 0).map(p => `${p.x},${p.y}`));
+      supportRangeSet = new Set();
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) + Math.abs(dy) > r || (dx === 0 && dy === 0)) continue;
+          const k = `${sel.x + dx},${sel.y + dy}`;
+          if (!kingCells.has(k)) supportRangeSet.add(k);
+        }
+      }
+    }
+  }
+
   const __cellMap = new Map();
   for (let y = __vy0; y <= __vy1; y++) {
     for (let x = __vx0; x <= __vx1; x++) {
@@ -2567,6 +2586,14 @@ function makeOnCellClick(x, y, onCellPlayers) {
         safeHint.title = '텔레포트 스폰 지점 — 전투 면역';
         safeHint.textContent = '🛡️';
         cell.appendChild(safeHint);
+      }
+
+      if (supportRangeSet && supportRangeSet.has(`${x},${y}`)) {
+        const supportHint = document.createElement('div');
+        supportHint.className = 'absolute inset-0 pointer-events-none';
+        supportHint.style.background = 'rgba(34, 197, 94, 0.35)'; // 초록색: 선택 유닛이 전투력을 지원할 수 있는 칸
+        supportHint.title = '지원 사거리';
+        cell.appendChild(supportHint);
       }
 
       if (showerPuddleTargetSet && showerPuddleTargetSet.has(`${x},${y}`)) {

@@ -1,0 +1,323 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>특수 병사 도감</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: 상단 요약(턴 발동표) → 필터 바 → 유닛 카드 그리드. 진화형은 카드 안에 접힌 패널. */
+:root {
+  --bg: #eceee8;
+  --surface: #f8f9f5;
+  --ink: #1b221e;
+  --muted: #5d6860;
+  --line: #d3d8cf;
+  --accent: #2c5784;
+  --accent-soft: #dde6f0;
+  --gold: #a8690f;
+  --gold-soft: #f4e7cf;
+  --water: #0b6f86;
+  --water-soft: #d6eef2;
+  --bar: #c9cfc5;
+  --font-display: "Black Han Sans", "IBM Plex Sans KR", sans-serif;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #131714; --surface: #1c211d; --ink: #e6ebe5; --muted: #9aa69d; --line: #2e3530;
+  --accent: #8fb6e0; --accent-soft: #1f2d3c; --gold: #e3a94f; --gold-soft: #3a2d17;
+  --water: #5cc3d6; --water-soft: #15323a; --bar: #343c36; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #131714; --surface: #1c211d; --ink: #e6ebe5; --muted: #9aa69d; --line: #2e3530;
+  --accent: #8fb6e0; --accent-soft: #1f2d3c; --gold: #e3a94f; --gold-soft: #3a2d17;
+  --water: #5cc3d6; --water-soft: #15323a; --bar: #343c36; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+header h1 { font-family: var(--font-display); font-weight: 400; font-size: clamp(30px, 5vw, 44px); line-height: 1.1; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+header p { margin: 8px 0 0; color: var(--muted); max-width: 62ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; font-size: 13px; color: var(--muted); }
+.legend b { color: var(--ink); font-weight: 700; }
+
+h2 { font-family: var(--font-display); font-weight: 400; font-size: 22px; margin: 0 0 12px; }
+
+/* 턴 발동표 */
+.turns { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.turn { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.turn-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.turn-num { font-family: var(--font-mono); font-weight: 600; font-size: 20px; color: var(--accent); }
+.turn-label { font-size: 13px; color: var(--muted); }
+.turn ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.turn li button { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 999px; padding: 2px 10px; cursor: pointer; }
+.turn li button:hover { border-color: var(--accent); color: var(--accent); }
+.turn li .evo-mark { color: var(--gold); }
+
+/* 필터 */
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; border-bottom: 1px solid var(--line); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.bar input { flex: 1 1 220px; min-width: 0; font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.bar input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: inherit; font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.count { font-size: 13px; color: var(--muted); font-family: var(--font-mono); margin-left: auto; }
+
+/* 카드 */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+@media (max-width: 420px) { .grid { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; scroll-margin-top: 80px; }
+.card.flash { outline: 2px solid var(--accent); }
+.card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.card-head h3 { font-family: var(--font-display); font-weight: 400; font-size: 21px; margin: 0; margin-right: 4px; }
+.badge { font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; letter-spacing: 0.02em; }
+.b-water { background: var(--water-soft); color: var(--water); }
+.b-evo { background: var(--gold-soft); color: var(--gold); }
+.b-kind { background: var(--accent-soft); color: var(--accent); }
+
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { display: flex; flex-direction: column; gap: 4px; }
+.stat-top { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+.stat-top b { font-family: var(--font-mono); font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; font-size: 13px; }
+.meter { height: 5px; border-radius: 3px; background: var(--bar); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+
+.skills { display: flex; flex-direction: column; gap: 10px; }
+.skill { font-size: 14px; }
+.skill-name { display: block; font-weight: 700; font-size: 13.5px; color: var(--accent); }
+.skill-name .trig { font-family: var(--font-mono); font-weight: 500; font-size: 11.5px; color: var(--muted); margin-left: 6px; }
+.skill p { margin: 2px 0 0; }
+.skill .new { color: var(--gold); font-weight: 700; font-size: 11.5px; margin-left: 6px; }
+.none { color: var(--muted); font-size: 14px; }
+
+.sub { border-top: 1px dashed var(--line); padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.sub-title { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+details.evo { border: 1px solid var(--gold-soft); background: color-mix(in srgb, var(--gold-soft) 45%, transparent); border-radius: 10px; padding: 0 12px; }
+details.evo summary { cursor: pointer; padding: 9px 0; font-weight: 700; font-size: 13.5px; color: var(--gold); list-style: none; display: flex; align-items: center; gap: 6px; }
+details.evo summary::-webkit-details-marker { display: none; }
+details.evo summary::before { content: "▸"; transition: transform .15s; }
+details.evo[open] summary::before { transform: rotate(90deg); }
+details.evo .evo-body { padding-bottom: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+.empty { text-align: center; color: var(--muted); padding: 40px 0; }
+footer { color: var(--muted); font-size: 12.5px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <p style="margin:0 0 6px;font-size:13px"><a href="./" style="color:var(--accent)">← 게임으로 돌아가기</a></p>
+    <h1>특수 병사 도감</h1>
+    <p>다수가 승리하는 법 v2.0.1 기준. 특수 병사 24종의 능력치, 스킬, 진화 효과를 한곳에 모았습니다. 일반 병사는 전투력 1, 사거리 0, 이동 능력 1입니다.</p>
+    <div class="legend">
+      <span><b>전투력</b> 전투 시 기본 힘</span>
+      <span><b>사거리</b> 지원 가능한 거리</span>
+      <span><b>이동 능력</b> 주사위 1당 이동량 배율</span>
+      <span><b style="color:var(--gold)">★</b> 진화 가능 (7종)</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>턴 배수 발동표</h2>
+    <div class="turns" id="turns"></div>
+  </section>
+
+  <section>
+    <div class="bar">
+      <input id="q" type="search" placeholder="이름이나 스킬로 검색 (예: 웅덩이, 왕이 있는 칸)" aria-label="검색">
+      <div class="chips" id="chips"></div>
+      <span class="count" id="count"></span>
+    </div>
+    <div class="grid" id="grid" style="margin-top:14px"></div>
+  </section>
+
+  <footer>출처: 게임 코드의 유닛 설명 데이터(UNIT_INFO). 능력치 막대는 사신(4)을 최대치로 잡았습니다.</footer>
+</div>
+
+<script>
+// stats: [전투력, 사거리, 이동 능력]
+// trig: 발동 주기(턴 배수) — 발동표와 스킬 옆 표시에 사용
+const UNITS = [
+  { name: '저격수', stats: [1, 5, 1], skills: [
+      ['지원 사격', '전투력을 지원할 때 지원 전투력은 기본 전투력 +2로 계산한다.'] ],
+    evo: { stats: [1, 5, 1], skills: [
+      ['지원 사격', '전투력을 지원할 때 지원 전투력은 기본 전투력 +2로 계산한다.'],
+      ['저격', '사거리 안의 유닛 하나를 선택해 즉시 제거한다. 성공 확률은 15%이며, 움직이지 않은 턴 수만큼 +10%씩 증가한다(최대 75%). 움직이면 초기화된다.', 2, true] ] } },
+  { name: '기자', stats: [1, 0, 1], skills: [
+      ['특종', '원한다면 자신의 살아 있는 모든 캐릭터를 이 카드의 위치로 모은다.', 5] ] },
+  { name: '고목', tags: ['친수성'], stats: [1, 1, 1], skills: [
+      ['뿌리 내리기', '이 카드는 (이동하지 않은 턴 수 + 1)을 전투력과 사거리로 가진다. (최대 4)'] ],
+    evo: { stats: [1, 1, 1], skills: [
+      ['길고 빠르게 뿌리 내리기', '이 카드는 (이동하지 않은 턴 수 + 2)를 전투력과 사거리로 가진다. (최대 6)', null, true] ] } },
+  { name: '사신', stats: [4, 4, 4], skills: [
+      ['사의 기운', '이 카드가 살아 있는 한 자신의 주사위 눈을 4로 고정한다.'] ] },
+  { name: '사육사', kind: '변신', stats: [1, 0, 1], skills: [
+      ['대신 싸우기', '원한다면 다른 모습(코끼리·개구리·고양이)으로 바꿀 수 있다. 어떤 모습이든 이 스킬은 유지된다.', 2] ],
+    forms: [
+      { name: '코끼리', tags: ['친수성'], stats: [3, 1, 2], skills: [['위대한 체급', '전투력 3, 사거리 1을 가진다.']],
+        evo: { stats: [3, 1, 2], skills: [['웅덩이 만들기', '주변 2칸 안에서 친수성 태그가 없는 말이 없는 칸을 골라 물 웅덩이로 만든다. 물 웅덩이에는 친수성 말만 들어갈 수 있고, 친수성 유닛은 그 위에서 전투력 +2, 사거리 +1이 된다.', 3, true]] } },
+      { name: '개구리', tags: ['친수성'], stats: [0, 0, 1], skills: [['위대한 울음소리', '주위 2칸 범위에 다른 참여자의 캐릭터가 진입하지 못하게 한다.']],
+        evo: { stats: [0, 0, 1], skills: [
+          ['위대한 울음소리', '주위 2칸 범위에 다른 참여자의 캐릭터가 진입하지 못하게 한다.'],
+          ['독 제공', '자신의 다른 유닛이 이 유닛과 같은 칸에 잠시라도 있었다면, 그 유닛의 지원 전투력이 2배가 된다. 전투에 지원하면 사라진다.', null, true]] } },
+      { name: '고양이', stats: [0.9, 0, 1], skills: [['위대한 생존력', '전투에서 져도 사망 처리되지 않고 왕이 있는 칸으로 간다.']],
+        evo: { stats: [1.1, 0, 1], note: '전투력 0.9 → 1.1', skills: [['위대한 생존력', '전투에서 져도 사망 처리되지 않고 왕이 있는 칸으로 간다.']] } },
+    ],
+    evo: { note: '사육사를 진화시키면 각 모습이 아래 ★ 효과를 얻습니다.' } },
+  { name: '건축가', stats: [1, 0, 1], skills: [
+      ['성 쌓기', '원한다면 이 카드의 위치에 성을 쌓는다. 성은 최대 5개이며, 6개째를 쌓으면 가장 오래된 성이 제거된다. 성과 같은 칸에 있는 카드는 원한다면 다른 성으로 이동할 수 있다.', 2] ] },
+  { name: '닌자', stats: [0.5, 5, 0.25], skills: [
+      ['침투', '이 카드가 있는 칸에 이 카드만 있을 때 사용할 수 있다. 사거리 안에 있는 다른 참여자의 카드 하나를 골라 이 카드와 위치를 바꾼다.', 3] ],
+    evo: { stats: [0.5, 5, 0.25], skills: [
+      ['침투', '이 카드가 있는 칸에 이 카드만 있을 때 사용할 수 있다. 사거리 안에 있는 다른 참여자의 카드 하나를 골라 이 카드와 위치를 바꾼다.', 3],
+      ['연막', '전투에서 패배해도 제거되지 않고, 주변 2칸 안의 점유되지 않은 랜덤한 칸으로 이동한다. 모두 점유되어 있다면 왕이 있는 칸으로 이동한다.', null, true] ] } },
+  { name: '범고래', tags: ['친수성'], stats: [1, 1, 1], skills: [
+      ['파도 일으키기', '자신의 이동 에너지를 +1 한다.'] ] },
+  { name: '수레꾼', stats: [0.5, 0, 1], skills: [
+      ['손님 받아라', '이 카드가 이동할 때 원한다면 같은 칸에 있는 다른 카드도 같이 이동한다.'] ] },
+  { name: '도박사', stats: [1, 0, 0.5], skills: [
+      ['이동 에너지 도박', '자신의 주사위 눈이 50% 확률로 1, 50% 확률로 12가 된다.', 2] ],
+    evo: { title: '도박꾼', stats: [1, 0, 0.5], note: '진화하면 이름이 도박꾼으로 바뀐다.', skills: [
+      ['이동 에너지 도박', '자신의 이동 에너지가 25% 확률로 1, 75% 확률로 12가 된다.', 2, true] ] } },
+  { name: '좀비', stats: [1, 0, 0.5], skills: [
+      ['물어뜯기', '이 카드가 참여한 전투에서 승리하면, 패배한 상대 카드 중 하나를 랜덤하게 골라 자신의 카드로 만든다.'] ] },
+  { name: '의사', stats: [0, 2, 1], skills: [
+      ['부활', '자신이 전투에서 패배했을 때, 그 전투가 이 카드와 같은 구역(판을 4개로 나눈 구역) 안이면 80%, 아니면 20% 확률로 그 칸의 카드들이 제거되지 않고 이 카드의 위치로 이동한다. (이 카드가 패배한 전투에서는 발동하지 않는다)'] ] },
+  { name: '눈사람', stats: [0, 1, 1], skills: [
+      ['스노우볼 굴리기', '눈덩이 2개가 사거리 안에 소환된다. 눈사람이 눈덩이가 있는 칸에 도달하면 전투력과 사거리가 1씩 증가하고, 눈덩이는 다른 곳에 재배치된다. (이미 말이 있는 칸에는 재배치되지 않는다)'] ] },
+  { name: '폼트랜서', kind: '변신', stats: [1, 1, 1], skills: [
+      ['변신', '게임판에 있는 말 중 하나를 골라 자신의 차례 동안 그 말로 변신한다.', 3] ] },
+  { name: '광대', stats: [1, 0, 1], skills: [
+      ['주의 끌기', '이 카드가 전투가 일어나는 칸에 있다면 전투 상대의 지원 전투력을 0으로 만든다.'] ],
+    evo: { stats: [1, 0, 1], skills: [
+      ['광역 어그로', '이 카드를 보유한 플레이어가 참여하는 모든 전투에서 상대의 지원 전투력을 0으로 만든다.', null, true] ] } },
+  { name: '스키퍼', stats: [1, 0, 1], skills: [
+      ['턴 스킵', '주사위에서 6 이상이 나오면 턴 수를 +1~5 할 수 있다.'] ] },
+  { name: '여왕개미', kind: '소환', stats: [1, 0, 1], skills: [
+      ['개미 다루기', '다음 중 하나를 고른다.<br>· 개미 소환: 이 말의 위치에 개미 3마리를 소환한다.<br>· 개미 강화: 소환된 개미의 전투력을 +0.25 한다.', 4] ],
+    forms: [ { name: '개미', label: '소환물', stats: [1, 0, 1], skills: [] } ] },
+  { name: '상인', stats: [1, 0, 1], skills: [
+      ['교역', '매 턴마다 왕을 제외한 자신의 말 중 하나를 랜덤으로 제거하고, 그 자리에 왕을 제외한 모든 말 중 하나를 랜덤으로 소환한다. (일반 병사 55%, 특수 병사 45%)', 1] ] },
+  { name: '응원단장', stats: [1, 5, 1], skills: [
+      ['응원의 힘', '자신의 차례가 시작될 때 이 말의 사거리 안에 있는 일반 병사의 전투력을 +1 한다. 이 효과는 다음 자신의 차례가 되면 사라진다.'] ] },
+  { name: '트럭 운전사', stats: [1, 0, 0.5], skills: [
+      ['이세계로 보내기', '원하는 방향으로 3칸 이동한 뒤, 주위 3칸 안의 모든 병사(이 병사 제외)를 2턴 동안 사라지게 한다. 왕은 해당되지 않는다. 2턴 뒤 자신의 차례가 되면 사라졌던 병사들이 원래 있던 칸으로 돌아온다.', 5] ] },
+  { name: '블레이즈 & 엠버', kind: '2인 1조', stats: null, skills: [
+      ['한 쌍', '게임이 시작되면 블레이즈와 엠버 두 유닛으로 나뉜다.'] ],
+    forms: [
+      { name: '블레이즈', stats: [1, 0, 1], skills: [['불씨 모으기', '엠버와 같은 칸에 있다면 전투력이 4가 되고 이동 능력은 1이 된다.']] },
+      { name: '엠버', stats: [1, 0, 0.5], skills: [
+        ['프렌즈 실드', '블레이즈와 같은 칸에 있다면 전투에서 패배해도 제거되지 않고 왕이 있는 칸으로 이동한다.'],
+        ['블레이즈 육성', '블레이즈가 없을 때 사용할 수 있다. 랜덤한 일반 병사가 있는 칸으로 이동하고, 그 일반 병사를 블레이즈로 바꾼다.'],
+        ['블레이즈와 연결', '블레이즈와 같은 칸에 있을 때 사용할 수 있다. 엠버가 이동하는 칸으로 블레이즈가 따라온다. 블레이즈가 다른 칸으로 이동하면 연결이 해제된다.']] },
+    ] },
+  { name: '비숍', stats: [0.5, 0, 1], skills: [
+      ['대각선 질주', '자신의 차례에 한 번, 대각선으로 몇 칸이든 이동할 수 있다. 단, 병사가 있는 칸을 지나갈 수는 없다.'] ],
+    evo: { stats: [0.5, 0, 1], skills: [
+      ['대각선 질주', '자신의 차례에 한 번, 대각선으로 몇 칸이든 이동할 수 있다. 단, 병사가 있는 칸을 지나갈 수는 없다. 이 스킬로 혼자 있는 다른 유닛과 같은 칸에 도착하면 그 유닛을 즉시 제거한다. (이번 차례에 이미 비숍을 움직였다면 적용되지 않는다)', null, true] ] } },
+  { name: '샤워기', tags: ['친수성'], stats: [1, 0, 1], skills: [
+      ['웅덩이 만들기', '주변 2칸 안에서 친수성 태그가 없는 말이 없는 칸을 골라 물 웅덩이로 만든다. 물 웅덩이에는 친수성 말만 들어갈 수 있고, 친수성 유닛은 그 위에서 전투력 +2, 사거리 +1이 된다.', 3],
+      ['수압 증가', '이 말이 물 웅덩이에 있으면 전투력이 4, 사거리가 3이 된다.'] ] },
+  { name: '인형사', stats: [1, 0, 0.5], skills: [
+      ['끊어진 실', '이 유닛이 있을 때 전투에서 유닛이 제거되면, 제거된 유닛 중 랜덤한 하나의 실이 그 칸에 남는다.'],
+      ['실 연결', "이 유닛이 있으면 자신의 모든 유닛 이름 뒤에 '인형'이 붙고 '실' 태그가 부여된다."],
+      ['인형 제작', '실이 있는 칸에서 사용할 수 있다. 실의 주인이 일반 병사면 100%, 특수 병사면 30% 확률로 아군으로 만든다.'],
+      ['인형 교체', "매 턴 2번 사용할 수 있다. 자신의 '실' 태그를 가진 유닛과 위치를 바꾼다."] ] },
+];
+
+const MAX = 4;
+const esc = (t) => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const slug = (n) => 'u-' + n.replace(/[^가-힣A-Za-z0-9]/g, '');
+const hasEvo = (u) => !!u.evo;
+const isWater = (u) => (u.tags || []).includes('친수성') || (u.forms || []).some(f => (f.tags || []).includes('친수성'));
+
+function statsHTML(s) {
+  if (!s) return '';
+  const labels = ['전투력', '사거리', '이동 능력'];
+  return `<div class="stats">${s.map((v, i) => `<div class="stat"><div class="stat-top"><span>${labels[i]}</span><b>${v}</b></div><div class="meter"><i style="width:${Math.min(100, v / MAX * 100)}%"></i></div></div>`).join('')}</div>`;
+}
+function skillsHTML(list) {
+  if (!list || !list.length) return '<div class="none">스킬 없음</div>';
+  return `<div class="skills">${list.map(([n, t, trig, isNew]) => `<div class="skill"><span class="skill-name">${esc(n)}${trig ? `<span class="trig">${trig === 1 ? '매 턴' : trig + '의 배수 턴'}</span>` : ''}${isNew ? '<span class="new">진화 추가</span>' : ''}</span><p>${t}</p></div>`).join('')}</div>`;
+}
+function tagsHTML(tags) { return (tags || []).map(t => `<span class="badge b-water">${esc(t)}</span>`).join(''); }
+function evoHTML(e, title) {
+  return `<details class="evo"><summary>★ 진화: ${esc(title)}</summary><div class="evo-body">${e.note ? `<div class="none">${esc(e.note)}</div>` : ''}${e.stats ? statsHTML(e.stats) : ''}${e.skills ? skillsHTML(e.skills) : ''}</div></details>`;
+}
+
+function cardHTML(u) {
+  let h = `<article class="card" id="${slug(u.name)}"><div class="card-head"><h3>${esc(u.name)}</h3>`;
+  if (u.kind) h += `<span class="badge b-kind">${esc(u.kind)}</span>`;
+  h += tagsHTML(u.tags);
+  if (hasEvo(u)) h += `<span class="badge b-evo">★ 진화 가능</span>`;
+  h += `</div>${statsHTML(u.stats)}${skillsHTML(u.skills)}`;
+  if (u.evo && !u.forms) h += evoHTML(u.evo, u.evo.title ? `${u.name}★ → ${u.evo.title}` : `${u.name}★`);
+  if (u.evo && u.forms && u.evo.note) h += `<div class="none" style="font-size:13px">${esc(u.evo.note)}</div>`;
+  for (const f of u.forms || []) {
+    h += `<div class="sub"><div class="sub-title">${u.name === '사육사' ? `${esc(f.name)}의 모습` : esc(f.name)}${f.label ? `<span class="badge b-kind">${esc(f.label)}</span>` : ''}${tagsHTML(f.tags)}</div>${statsHTML(f.stats)}${skillsHTML(f.skills)}${f.evo ? evoHTML(f.evo, `${f.name}★`) : ''}</div>`;
+  }
+  return h + '</article>';
+}
+
+// 턴 배수 발동표
+(function renderTurns() {
+  const buckets = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+  const add = (trig, unit, skill, evo) => { if (trig && buckets[trig]) buckets[trig].push({ unit, skill, evo }); };
+  for (const u of UNITS) {
+    for (const s of u.skills) add(s[2], u.name, s[0], false);
+    if (u.evo?.skills) for (const s of u.evo.skills) if (s[3]) add(s[2], u.name, s[0], true);
+    for (const f of u.forms || []) if (f.evo?.skills) for (const s of f.evo.skills) if (s[3]) add(s[2], u.name, `${f.name} · ${s[0]}`, true);
+  }
+  const label = { 1: '매 턴', 2: '2의 배수 턴', 3: '3의 배수 턴', 4: '4의 배수 턴', 5: '5의 배수 턴' };
+  document.getElementById('turns').innerHTML = Object.entries(buckets).filter(([, v]) => v.length).map(([k, v]) =>
+    `<div class="turn"><div class="turn-head"><span class="turn-num">${k === '1' ? '×1' : '×' + k}</span><span class="turn-label">${label[k]}</span></div><ul>${v.map(x =>
+      `<li><button type="button" data-jump="${slug(x.unit)}">${esc(x.unit === x.skill ? x.unit : x.unit)} · ${esc(x.skill)}${x.evo ? ' <span class="evo-mark">★</span>' : ''}</button></li>`).join('')}</ul></div>`).join('');
+})();
+
+// 필터
+const FILTERS = [
+  ['all', '전체', () => true],
+  ['evo', '★ 진화 가능', hasEvo],
+  ['water', '친수성', isWater],
+  ['turn', '턴 배수 발동', u => u.skills.some(s => s[2] > 1)],
+  ['survive', '패배 시 생존', u => JSON.stringify(u).match(/패배해도|져도|제거되지 않고/)],
+];
+let active = 'all';
+const chips = document.getElementById('chips');
+chips.innerHTML = FILTERS.map(([k, l]) => `<button type="button" class="chip" data-f="${k}" aria-pressed="${k === active}">${l}</button>`).join('');
+chips.addEventListener('click', e => {
+  const b = e.target.closest('[data-f]'); if (!b) return;
+  active = b.dataset.f;
+  chips.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.f === active));
+  render();
+});
+const q = document.getElementById('q');
+q.addEventListener('input', render);
+
+function render() {
+  const term = q.value.trim().toLowerCase();
+  const fn = FILTERS.find(f => f[0] === active)[2];
+  const list = UNITS.filter(u => fn(u) && (!term || JSON.stringify(u).toLowerCase().includes(term)));
+  const grid = document.getElementById('grid');
+  grid.innerHTML = list.length ? list.map(cardHTML).join('') : '<div class="empty">조건에 맞는 특수 병사가 없습니다. 검색어나 필터를 바꿔 보세요.</div>';
+  if (term) grid.querySelectorAll('details.evo').forEach(d => { if (d.textContent.toLowerCase().includes(term)) d.open = true; });
+  document.getElementById('count').textContent = `${list.length} / ${UNITS.length}종`;
+}
+render();
+
+document.getElementById('turns').addEventListener('click', e => {
+  const b = e.target.closest('[data-jump]'); if (!b) return;
+  if (active !== 'all' || q.value) { active = 'all'; q.value = ''; chips.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', c.dataset.f === 'all')); render(); }
+  const el = document.getElementById(b.dataset.jump); if (!el) return;
+  if (b.querySelector('.evo-mark')) el.querySelectorAll('details.evo').forEach(d => d.open = true);
+  el.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1400);
+});
+</script>
+
+</body></html>
