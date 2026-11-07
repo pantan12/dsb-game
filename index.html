@@ -6535,10 +6535,24 @@ addBlazeEmberSeeds();
 addBishops();
 addShowers();
 addPuppeteers();
+addSpecialForEachTeam('스프링쿨러');
+addSpecialForEachTeam('사냥꾼 상어');
   markSpecialTags();
   syncSnowballsToSnowmen();
   startSpecialDraft();
   drawBoard();
+}
+// 일반 드래프트: 각 팀에 지정한 특수 병사 1기씩 추가 (이미 있으면 건너뜀)
+function addSpecialForEachTeam(name){
+  const teams = new Set();
+  for (const p of players){
+    if (p.name==='왕'||p.name==='일반 병사') teams.add(p.team);
+  }
+  for (const team of teams){
+    if (players.some(pp=>pp.team===team && pp.name===name)) continue;
+    const u = createSpecialUnitByName(name, team);
+    if (u) players.push(u);
+  }
 }
 function addTruckDrivers(){
   const startByTeam = new Map();
