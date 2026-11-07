@@ -2736,11 +2736,21 @@ if (onCellPlayers.length > 0) {
     token.textContent = g.length > 1 ? String(g.length) : g[0].name.slice(0, 1);
     token.title = g.length > 1
       ? `${g[0].team + 1}P ${g.length}기: ${g.map(u => displayName(u)).join(', ')}`
-      : `${g[0].team + 1}P ${displayName(g[0])}`;
+      : `${g[0].team + 1}P ${displayName(g[0])}${isAdrenalineActive(g[0]) ? ' (전투력 ∞)' : ''}`;
     square.appendChild(token);
   }
   square.addEventListener('click', handler);
   cell.appendChild(square);
+
+  // 사냥꾼 상어 '아드레날린 폭발' 발동 중: 칸 모서리에 전투력 ∞ 표시
+  if (onCellPlayers.some(isAdrenalineActive)) {
+    const inf = document.createElement('div');
+    inf.className = 'absolute pointer-events-none';
+    inf.title = '아드레날린 폭발 — 전투력 ∞';
+    inf.textContent = '∞';
+    Object.assign(inf.style, { top: '0', right: '1px', fontSize: '13px', fontWeight: '800', lineHeight: '1', color: '#dc2626', textShadow: '0 0 2px #fff, 0 0 2px #fff', zIndex: '3' });
+    cell.appendChild(inf);
+  }
 
   // 선택 하이라이트
   if (typeof selectedPlayerId !== 'undefined' &&
@@ -2973,7 +2983,11 @@ function updatePuppeteerTeamTags() {
   if (popup) popup.style.display = 'none';
   drawBoard();
 }
+// 화면 표시용 전투력: 사냥꾼 상어 '아드레날린 폭발' 발동 중이면 ∞ (실제 계산값은 그대로)
+function isAdrenalineActive(u){ return !!(u && u.name === '사냥꾼 상어' && u._adrenaline); }
+function powerLabel(u){ return isAdrenalineActive(u) ? '∞' : `${u.power ?? 1}`; }
 function formatPowerWithCheer(u){
+  if (isAdrenalineActive(u)) return '∞ (아드레날린 폭발)';
   const total = +(u.power ?? 0);
   const cheer = +(u._cheerBuffVal ?? 0);
   if (!cheer) return `${total}`;               // 버프 없으면 숫자만
@@ -3704,6 +3718,29 @@ for (const u of losers) {
   return { teamsHere, stats };
 }
 
+// 문자열 시드 → 0~1 난수 생성기 (온라인 접속자 간 같은 결과가 필요한 랜덤 효과용)
+function seededRng(seedStr) {
+  let h = 1779033703 ^ seedStr.length;
+  for (let i = 0; i < seedStr.length; i++) { h = Math.imul(h ^ seedStr.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
+  let a = h >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+// 게임 첫 차례(플레이어 1의 1턴) 시작 처리: 다른 차례는 endTurn에서 처리되지만,
+// 첫 차례는 endTurn을 거치지 않으므로 드래프트가 끝날 때 여기서 '차례 시작' 효과를 적용한다.
+let __firstTurnStartDone = false;
+function beginFirstTurn() {
+  if (__firstTurnStartDone) return; // 같은 화면에서 드래프트 종료가 두 번 처리되어도 한 번만
+  __firstTurnStartDone = true;
+  clearCheerBuffsForTeam(currentTurn);
+  applyCheerBuffsForTeam(currentTurn);
+  startOfTurnPassives(currentTurn);
+}
 // 턴 시작 패시브: 블레이즈/엠버
 function startOfTurnPassives(team){
   // 사냥꾼 상어 '아드레날린 폭발': 다음 자기 차례가 시작되면 해제
@@ -3714,7 +3751,9 @@ function startOfTurnPassives(team){
   const sprinklers = players.filter(u => u.team === team && u.name === '스프링쿨러' && u.x >= 0 && u.y >= 0);
   if (sprinklers.length > 0) {
     let made = 0;
-    for (const s of sprinklers) made += sprinklePuddles(2).length;
+    // 온라인에서 모든 접속자가 같은 칸을 고르도록 (방·턴·팀·현재 웅덩이 수) 기반 시드 난수 사용
+    const rng = seededRng(`${roomId || 'local'}:${currentRound}:${team}:${waterPuddles.length}`);
+    for (const s of sprinklers) made += sprinklePuddles(2, rng).length;
     if (made > 0) showCenterMessage?.(`💦 스프링쿨러 — 물 흩뿌리기! 물 웅덩이 ${made}칸 생성`, 1800);
   }
   // 2) 블레이즈: 같은 칸에 엠버가 있으면 '그 턴 동안' 전투력=4, 이동=0
@@ -4425,7 +4464,7 @@ function performNinjaSwap(target) {
     return seen.size === landCount;
   }
   // 스프링쿨러 '물 흩뿌리기': 판 전체에서 조건에 맞는 칸 중 랜덤으로 n칸을 물 웅덩이로 만든다
-  function sprinklePuddles(n) {
+  function sprinklePuddles(n, rng = Math.random) {
     const made = [];
     for (let i = 0; i < n; i++) {
       const cands = [];
@@ -4435,7 +4474,7 @@ function performNinjaSwap(target) {
         cands.push({ x, y });
       }
       // 무작위 순서로 섞은 뒤 연결 규칙을 만족하는 첫 칸을 고른다
-      for (let j = cands.length - 1; j > 0; j--) { const k = Math.floor(Math.random() * (j + 1)); [cands[j], cands[k]] = [cands[k], cands[j]]; }
+      for (let j = cands.length - 1; j > 0; j--) { const k = Math.floor(rng() * (j + 1)); [cands[j], cands[k]] = [cands[k], cands[j]]; }
       const pick = cands.find(c => puddlesKeepLandConnected([c]));
       if (!pick) break;
       waterPuddles.push(pick);
@@ -4491,6 +4530,7 @@ function performNinjaSwap(target) {
   markSpecialTags?.();
   attachDraftKeyHandler();
   specialDraft.active = true;
+  __firstTurnStartDone = false;
   draftSignals.peersReady.clear();
   draftSignals.finalized = false;
 
@@ -4768,7 +4808,7 @@ function beginFormtranceChoose(former){
     const btn = document.createElement('button');
     btn.type='button';
     btn.className='block w-full text-left px-3 py-2 rounded hover:bg-gray-200 hover:text-black mb-1';
-    btn.textContent = `${displayName(u)} - 팀 ${u.team+1} / 전:${u.power} / 이:${u.movement} / 사:${u.range}`;
+    btn.textContent = `${displayName(u)} - 팀 ${u.team+1} / 전:${powerLabel(u)} / 이:${u.movement} / 사:${u.range}`;
     btn.onclick = ()=> {
       pushSnapshot('formtrance');
       performFormtrance(former, u);
@@ -5107,8 +5147,7 @@ draftSignals.finalized = false;
     }, 100);
   }
   status && (status.textContent = '게임을 시작합니다!');
-clearCheerBuffsForTeam(currentTurn);
-applyCheerBuffsForTeam(currentTurn);
+beginFirstTurn();
 if (typeof maybeStartTeleportPhase === 'function') maybeStartTeleportPhase(currentTurn);
 drawBoard();
 }
@@ -5727,7 +5766,7 @@ function openTeleportPrompt(team) {
     top: ((y + 0.5) / size) * SQUARE - dotSize / 2
   });
 
-  const statLabel = (u) => `⚔${u.power ?? 1} 🎯${u.range ?? 0} 👟${u.movement ?? 1}`;
+  const statLabel = (u) => `⚔${powerLabel(u)} 🎯${u.range ?? 0} 👟${u.movement ?? 1}`;
 
   const makeDraggableDot = (u, onReopen) => {
     const dot = document.createElement('div');
@@ -6379,6 +6418,7 @@ function applyCheerBuffsForTeam(team){
 }
 function beginRandomDraft(){
   randomDraft.active = true;
+  __firstTurnStartDone = false;
   randomDraft.round  = 0;
   randomDraft.teams  = getActiveTeams();   // 참가 팀(플레이어 수만큼)
   randomDraft.order  = rotatedOrder(0);
@@ -6483,8 +6523,7 @@ function finishRandomDraft(){
   popup.style.display = 'none';
   syncSnowballsToSnowmen();
   status && (status.textContent = '게임을 시작합니다!');
-  clearCheerBuffsForTeam(currentTurn);
-  applyCheerBuffsForTeam(currentTurn);
+  beginFirstTurn();
   syncRandomDraft();
   if (typeof maybeStartTeleportPhase === 'function') maybeStartTeleportPhase(currentTurn);
   drawBoard();
@@ -7508,7 +7547,7 @@ const UNIT_INFO = {
     ['돌진', '매 턴 한 번, 원하는 방향(상하좌우)으로 한 칸 움직일 수 있다. 이동 에너지를 쓰지 않는다.'],
     ['수중 저항 감소', '물 웅덩이 위에서는 이동 능력이 1이 된다.'],
     ['잠수 후 등장', '매 턴 한 번, 물 웅덩이 위에 있을 때 사용할 수 있다. 다른 물 웅덩이를 골라 그곳으로 이동한다.'],
-    ['아드레날린 폭발', '전투에서 승리하면 다음 자신의 차례가 시작되기 전까지 참여한 모든 전투에서 승리한다.'] ] },
+    ['아드레날린 폭발', '전투에서 승리하면 다음 자신의 차례가 시작되기 전까지 참여한 모든 전투에서 승리한다. 발동 중에는 전투력이 ∞로 표시된다.'] ] },
 };
 // 유닛 → 설명 키 (폼트랜서는 변신 중이어도 폼트랜서로 표시)
 function unitInfoKey(u) {
@@ -7559,7 +7598,8 @@ function renderUnitInfo() {
     for (const t of tags) html += `<span class="ui-badge ui-tag">${esc(t)}</span>`;
     html += `</div>`;
     if (stats) {
-      html += `<div class="ui-stats"><span class="ui-stat">전투력<b>${stats[0]}</b></span><span class="ui-stat">사거리<b>${stats[1]}</b></span><span class="ui-stat">이동 능력<b>${stats[2]}</b></span></div>`;
+      const adrenalOn = key === '사냥꾼 상어' && players.some(p => isAdrenalineActive(p) && p.x >= 0 && p.y >= 0);
+      html += `<div class="ui-stats"><span class="ui-stat">전투력<b>${adrenalOn ? stats[0] + ' → ∞' : stats[0]}</b></span><span class="ui-stat">사거리<b>${stats[1]}</b></span><span class="ui-stat">이동 능력<b>${stats[2]}</b></span></div>`;
     }
     if (!info) {
       html += `<div class="ui-skill" style="color:#9ca3af">아직 등록된 설명이 없습니다.</div>`;
@@ -8180,7 +8220,7 @@ function renderCastleMovePicker(castle){
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'block w-full text-left px-3 py-2 rounded mb-1';
-      btn.textContent = `${picked ? '✓ ' : ''}${displayName(u)} - 전투력:${u.power} / 이동:${u.movement} / 사거리:${u.range}`;
+      btn.textContent = `${picked ? '✓ ' : ''}${displayName(u)} - 전투력:${powerLabel(u)} / 이동:${u.movement} / 사거리:${u.range}`;
       btn.onclick = (e) => {
         e.stopPropagation(); // 재렌더링으로 이 버튼이 DOM에서 교체되면서 바깥 클릭으로 오인되어 팝업이 닫히는 것을 방지
         if (picked) castleMove.selectedIds.delete(u.id); else castleMove.selectedIds.add(u.id);
@@ -8258,7 +8298,7 @@ function renderEvoMenu(){
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'block w-full text-left px-4 py-3 rounded-lg mb-2';
-      btn.textContent = `${u.name} — 전:${u.power} / 이:${u.movement} / 사:${u.range}`;
+      btn.textContent = `${u.name} — 전:${powerLabel(u)} / 이:${u.movement} / 사:${u.range}`;
       btn.onclick = () => {
         const ok = applyEvolution(u);
         if (ok) {
