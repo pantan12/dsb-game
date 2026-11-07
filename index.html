@@ -505,6 +505,35 @@ const myPeerIdLabel = document.getElementById('myPeerIdLabel');
 const bishopDash = { active: false, unitId: null }; // 비숍 스킬 모드
 const showerPuddlePick = { active: false, showerId: null }; // 샤워기 '웅덩이 만들기' 위치 선택 모드 (진화한 코끼리도 재사용)
 const sniperShot = { active: false, unitId: null }; // 저격수(진화) '저격' 대상 선택 모드
+const sharkPick = { active: false, unitId: null, mode: null }; // 사냥꾼 상어 '돌진'(dash) / '잠수 후 등장'(dive) 칸 선택 모드
+// 사냥꾼 상어 '돌진': 상하좌우 한 칸 중 들어갈 수 있는 칸
+function getSharkDashCells(unit) {
+  if (!unit || !(unit.x >= 0 && unit.y >= 0)) return [];
+  if (unit._teleportLockThisTurn) return [];
+  if (typeof isClashCell === 'function' && isClashCell(unit.x, unit.y)) return [];
+  const out = [];
+  for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    const nx = unit.x + dx, ny = unit.y + dy;
+    if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+    if (typeof isOwnKingExclusionCell === 'function' && isOwnKingExclusionCell(unit.team, nx, ny)) continue;
+    if (typeof isEnteringEnemyFrog === 'function' && isEnteringEnemyFrog(unit.x, unit.y, nx, ny, unit.team)) continue;
+    if (isWaterPuddle(nx, ny) && !canStandOnWaterPuddle(unit)) continue;
+    out.push({ x: nx, y: ny });
+  }
+  return out;
+}
+// 사냥꾼 상어 '잠수 후 등장': 물 웅덩이 위에 있을 때, 다른 물 웅덩이 칸
+function getSharkDiveCells(unit) {
+  if (!unit || !(unit.x >= 0 && unit.y >= 0)) return [];
+  if (!isWaterPuddle(unit.x, unit.y)) return [];
+  if (unit._teleportLockThisTurn) return [];
+  if (typeof isClashCell === 'function' && isClashCell(unit.x, unit.y)) return [];
+  return waterPuddles.filter(w =>
+    !(w.x === unit.x && w.y === unit.y) &&
+    !(typeof isOwnKingExclusionCell === 'function' && isOwnKingExclusionCell(unit.team, w.x, w.y)) &&
+    !(typeof isEnteringEnemyFrog === 'function' && isEnteringEnemyFrog(unit.x, unit.y, w.x, w.y, unit.team))
+  ).map(w => ({ x: w.x, y: w.y }));
+}
 // 비숍 대각선 질주: 현재 이동 가능한 칸 목록(첫 점유 칸까지 포함, 그 이후는 불가)
 function getBishopDashReachableCells(unit) {
   const cells = [];
@@ -1836,7 +1865,7 @@ function addOrcas() {
       name: '범고래',
       team, x: pos.x, y: pos.y, color: getTeamColor(team),
       power: 1, movement: 1, range: 1, type: 'orca',
-      tags: ['특수 병사', '친수성']
+      tags: ['특수 병사', '친수성+']
     });
   }
 }
@@ -1937,7 +1966,7 @@ function addGomoks() {
       range: 1,
       type: 'gomok',
       _movedThisTurn: false,
-      tags: ['특수 병사', '친수성']
+      tags: ['특수 병사', '친수성+']
     });
   }
 }
@@ -2241,7 +2270,7 @@ function addShowers() {
       team, x: pos.x, y: pos.y,
       color: getTeamColor(team),
       power: 1, movement: 1, range: 1,
-      type: 'shower', tags: ['특수 병사', '친수성'], _usedThisTurn: false
+      type: 'shower', tags: ['특수 병사', '친수성+'], _usedThisTurn: false
     });
   }
 }
@@ -2350,6 +2379,28 @@ function makeOnCellClick(x, y, onCellPlayers) {
       drawBoard();
       return;
     }
+    // 사냥꾼 상어: '돌진' / '잠수 후 등장' 목적지 칸을 클릭해야 하는 단계
+    if (sharkPick.active) {
+      const shark = players.find(p => p.id === sharkPick.unitId);
+      const mode = sharkPick.mode;
+      sharkPick.active = false; sharkPick.unitId = null; sharkPick.mode = null; // 클릭 1회로 종료
+      if (!shark) { drawBoard(); return; }
+      if (shark.team !== currentTurn) { status && (status.textContent = '자신의 차례가 아닙니다'); return; }
+      const cells = mode === 'dive' ? getSharkDiveCells(shark) : getSharkDashCells(shark);
+      if (!cells.some(c => c.x === x && c.y === y)) {
+        status && (status.textContent = mode === 'dive' ? '이동할 수 없는 칸입니다 (다른 물 웅덩이만 가능)' : '돌진할 수 없는 칸입니다 (상하좌우 한 칸만 가능)');
+        drawBoard();
+        return;
+      }
+      pushSnapshot(mode === 'dive' ? 'skill:shark-dive' : 'skill:shark-dash');
+      shark.x = x; shark.y = y;
+      if (mode === 'dive') shark._sharkDiveUsed = true; else shark._sharkDashUsed = true;
+      checkSnowballPickupByTeamAt?.(x, y, shark.team);
+      status && (status.textContent = mode === 'dive' ? '🌊 사냥꾼 상어 — 잠수 후 등장!' : '🦈 사냥꾼 상어 — 돌진!');
+      drawBoard();
+      if (online) { const state = toRoomState(); broadcast({ t: 'SYNC', state, hash: hashState() }); }
+      return;
+    }
     // 샤워기: '웅덩이 만들기' 목적지 칸을 클릭해야 하는 단계
     if (showerPuddlePick.active) {
       const shower = players.find(p => p.id === showerPuddlePick.showerId);
@@ -2361,7 +2412,7 @@ function makeOnCellClick(x, y, onCellPlayers) {
       const candidates = getShowerPuddleCandidates(shower);
       const valid = candidates.some(c => c.x === x && c.y === y);
       if (!valid) {
-        status && (status.textContent = '웅덩이를 만들 수 없는 칸입니다 (거리 2칸 이내 & 친수성 없는 말이 없는 칸만 가능)');
+        status && (status.textContent = '웅덩이를 만들 수 없는 칸입니다 (거리 2칸 이내 & 친수성 없는 말이 없는 칸 & 설치 후에도 땅이 모두 이어지는 칸만 가능)');
         drawBoard();
         return;
       }
@@ -2551,6 +2602,16 @@ function makeOnCellClick(x, y, onCellPlayers) {
     }
   }
 
+  // 사냥꾼 상어 '돌진'/'잠수 후 등장' 발동 중이면 이동 가능한 칸을 미리 계산
+  let sharkTargetSet = null;
+  if (sharkPick.active) {
+    const sharkUnit = players.find(p => p.id === sharkPick.unitId);
+    if (sharkUnit) {
+      const cells = sharkPick.mode === 'dive' ? getSharkDiveCells(sharkUnit) : getSharkDashCells(sharkUnit);
+      sharkTargetSet = new Set(cells.map(c => `${c.x},${c.y}`));
+    }
+  }
+
   // 선택한 유닛이 사거리로 전투력을 지원할 수 있는 칸(맨해튼 거리 ≤ 사거리, 자기 칸 제외)
   // 왕이 있는 칸의 전투는 사거리 지원을 인정하지 않으므로 제외
   let supportRangeSet = null;
@@ -2594,6 +2655,13 @@ function makeOnCellClick(x, y, onCellPlayers) {
         supportHint.style.background = 'rgba(34, 197, 94, 0.35)'; // 초록색: 선택 유닛이 전투력을 지원할 수 있는 칸
         supportHint.title = '지원 사거리';
         cell.appendChild(supportHint);
+      }
+
+      if (sharkTargetSet && sharkTargetSet.has(`${x},${y}`)) {
+        const sharkHint = document.createElement('div');
+        sharkHint.className = 'absolute inset-0 pointer-events-none';
+        sharkHint.style.background = 'rgba(99, 102, 241, 0.5)'; // 남색: 상어 돌진/잠수 이동 가능 칸
+        cell.appendChild(sharkHint);
       }
 
       if (showerPuddleTargetSet && showerPuddleTargetSet.has(`${x},${y}`)) {
@@ -2756,6 +2824,7 @@ for (let i = 0; i < gifts.length; i++) {
   updateBlazeEmberAura();
   updateShowerPressureBuff();
   updateHydrophilicPuddleBuff();
+  updateSharkWaterMovement();
   updatePoisonBuff();
 
   // 왕좌 쟁탈전 4분할: 구역 탭 바 갱신 + 턴 시작 텔레포트 팝업 오픈
@@ -2794,13 +2863,21 @@ function updateShowerPressureBuff() {
     }
   }
 }
+// 사냥꾼 상어 패시브 '수중 저항 감소': 물 웅덩이 위에서는 이동 능력 1, 그 밖에서는 기본 4
+function updateSharkWaterMovement() {
+  for (const u of players) {
+    if (u.name !== '사냥꾼 상어') continue;
+    if (!(u.x >= 0 && u.y >= 0)) continue;
+    u.movement = isWaterPuddle(u.x, u.y) ? 1 : 4;
+  }
+}
 // 친수성 태그 유닛(샤워기 제외) 패시브: 물 웅덩이 위 또는 바로 주변 한 칸이면 전투력 +2 / 사거리 +1
 // (코끼리는 기본 사거리가 1이므로 이 조건에서 사거리 2가 됨 — 여기서는 다른 유닛과 동일하게 +1만 적용)
 // (샤워기는 절대치 고정 버프라 별도 처리, 여기서는 다른 유닛들의 기존 능력치에 상대적으로 가감)
 function updateHydrophilicPuddleBuff() {
   for (const u of players) {
     if (u.name === '샤워기') continue;
-    if (!Array.isArray(u.tags) || !u.tags.includes('친수성')) continue;
+    if (!Array.isArray(u.tags) || !u.tags.includes('친수성+')) continue; // 친수성+만 전투력·사거리 버프 (친수성은 물 위 이동만)
     if (typeof u.x !== 'number' || u.x < 0 || u.y < 0) continue;
     const onPuddle = isNearWaterPuddle(u.x, u.y);
     if (onPuddle && !u._hydroBoosted) {
@@ -3455,7 +3532,20 @@ function resolveBattles(onlyTeams = null) {
     }
 
     const maxPower = Math.max(...finalTeamPower.values());
-    const winners = teamsHere.filter(t => finalTeamPower.get(t) === maxPower);
+    let winners = teamsHere.filter(t => finalTeamPower.get(t) === maxPower);
+    // 사냥꾼 상어 '아드레날린 폭발': 발동 중인 상어가 이 칸 전투에 참여한 팀은 무조건 승리
+    // (그런 팀이 여럿이면 그 팀들끼리 전투력 비교)
+    const adrenalTeams = teamsHere.filter(t => units.some(u => u.team === t && u.name === '사냥꾼 상어' && u._adrenaline));
+    if (adrenalTeams.length > 0) {
+      const m = Math.max(...adrenalTeams.map(t => finalTeamPower.get(t) || 0));
+      winners = adrenalTeams.filter(t => (finalTeamPower.get(t) || 0) === m);
+    }
+    // 사냥꾼 상어: 전투에서 (단독) 승리하면 아드레날린 폭발 발동
+    if (winners.length === 1 && teamsHere.length > 1) {
+      for (const u of units) {
+        if (u.team === winners[0] && u.name === '사냥꾼 상어') u._adrenaline = true;
+      }
+    }
 
     if (typeof showBattleIcon === 'function') showBattleIcon(cx, cy);
 
@@ -3616,6 +3706,17 @@ for (const u of losers) {
 
 // 턴 시작 패시브: 블레이즈/엠버
 function startOfTurnPassives(team){
+  // 사냥꾼 상어 '아드레날린 폭발': 다음 자기 차례가 시작되면 해제
+  for (const u of players) {
+    if (u.team === team && u.name === '사냥꾼 상어') u._adrenaline = false;
+  }
+  // 스프링쿨러 '물 흩뿌리기': 차례 시작 시 판 전체에서 랜덤 2칸을 물 웅덩이로 (스프링쿨러 1기당)
+  const sprinklers = players.filter(u => u.team === team && u.name === '스프링쿨러' && u.x >= 0 && u.y >= 0);
+  if (sprinklers.length > 0) {
+    let made = 0;
+    for (const s of sprinklers) made += sprinklePuddles(2).length;
+    if (made > 0) showCenterMessage?.(`💦 스프링쿨러 — 물 흩뿌리기! 물 웅덩이 ${made}칸 생성`, 1800);
+  }
   // 2) 블레이즈: 같은 칸에 엠버가 있으면 '그 턴 동안' 전투력=4, 이동=0
   const blazes = players.filter(u => u.team === team && u.name === '블레이즈' && u.x >= 0 && u.y >= 0);
   for (const b of blazes) {
@@ -3706,6 +3807,15 @@ function startOfTurnPassives(team){
         }
         if (u.name === '샤워기' && typeof isNearWaterPuddle === 'function' && isNearWaterPuddle(u.x, u.y)) {
           passives.push({ icon: '🚿', text: '샤워기: 물 웅덩이 위/주변 1칸 — 전투력 4 / 사거리 3' });
+        }
+        if (u.name === '사냥꾼 상어' && isWaterPuddle(u.x, u.y)) {
+          passives.push({ icon: '🦈', text: '사냥꾼 상어: 수중 저항 감소 — 물 웅덩이 위 이동 능력 1' });
+        }
+        if (u.name === '사냥꾼 상어' && u._adrenaline) {
+          passives.push({ icon: '💢', text: '사냥꾼 상어: 아드레날린 폭발 — 다음 자기 차례 전까지 참여한 모든 전투에서 승리' });
+        }
+        if (u.name === '스프링쿨러') {
+          passives.push({ icon: '💦', text: '스프링쿨러: 물 흩뿌리기 — 차례 시작 시 판 전체에서 랜덤 2칸을 물 웅덩이로' });
         }
         if (u.name !== '샤워기' && u._hydroBoosted) {
           passives.push({ icon: '💧', text: `${displayName(u)}: 물 웅덩이 위/주변 1칸 — 전투력 +2 / 사거리 +1 적용 중` });
@@ -3898,6 +4008,7 @@ function endTurn() {
     if (u.name === '여왕개미') u._usedThisTurn = false;
     if (u.name === '비숍') { u._usedThisTurn = false; u._bishopMovedNormallyThisTurn = false; } // ← 추가
     if (u.name === '샤워기') u._usedThisTurn = false;
+    if (u.name === '사냥꾼 상어') { u._sharkDashUsed = false; u._sharkDiveUsed = false; }
     if (u.name === '저격수') u._usedThisTurn = false;
     if (u.name === '사육사' || u.name === '코끼리' || u.name === '고양이' || u.name === '개구리') u._usedThisTurn = false;
     if (u.name === '인형사') u._puppetSwapUses = 0;
@@ -4239,8 +4350,8 @@ function performKeeperTransform(label) {
   unit.range    = spec.range;
 
   if (!Array.isArray(unit.tags)) unit.tags = [];
-  unit.tags = unit.tags.filter(t => t !== '친수성');
-  if (label === '개구리' || label === '코끼리') unit.tags.push('친수성');
+  unit.tags = unit.tags.filter(t => t !== '친수성' && t !== '친수성+');
+  if (label === '개구리' || label === '코끼리') unit.tags.push('친수성+');
 
   // ✅ 진화(사육사 계열): 고양이(삵 아니고 칡) 형태일 때 전투력 +0.1. 스킬은 그대로, 스탯만 소폭 강화.
   if (unit._evolved && label === '고양이') {
@@ -4275,18 +4386,65 @@ function performNinjaSwap(target) {
   if (popup) popup.style.display = 'none';
   drawBoard();
 }
-  // 물 웅덩이: '친수성' 태그가 있는 말만 위에 있을 수 있음(샤워기/개구리/고목/범고래/코끼리)
+  // 물 웅덩이: '친수성' 또는 '친수성+' 태그가 있는 말만 위에 있을 수 있음
   const HYDROPHILIC_NAMES = new Set(['샤워기', '고목', '개구리', '범고래', '코끼리']);
   function isWaterPuddle(x, y) { return waterPuddles.some(w => w.x === x && w.y === y); }
   // 물 웅덩이 위 또는 바로 주변 한 칸(맨해튼 거리 1 이내): 친수성 유닛 버프 판정에 사용
   function isNearWaterPuddle(x, y) {
     return waterPuddles.some(w => Math.abs(w.x - x) + Math.abs(w.y - y) <= 1);
   }
+  // 태그 규칙: '친수성' = 물 웅덩이 위에 올라갈 수 있음
+  //           '친수성+' = 물 웅덩이 위에 올라갈 수 있음 + 물 웅덩이 위/주변에서 전투력 +2 / 사거리 +1
   function canStandOnWaterPuddle(unit) {
-    return !!unit && Array.isArray(unit.tags) && unit.tags.includes('친수성');
+    return !!unit && Array.isArray(unit.tags) && (unit.tags.includes('친수성') || unit.tags.includes('친수성+'));
+  }
+  // 물 웅덩이 설치 공통 규칙: 설치 후에도 '물 웅덩이가 아닌 모든 칸'이 서로 이어져 있어야 한다
+  // (= 친수성이 없는 유닛이 웅덩이에 갇히거나, 판의 일부에 갈 수 없게 되는 일이 없도록)
+  function puddlesKeepLandConnected(extraCells) {
+    const water = new Set(waterPuddles.map(w => `${w.x},${w.y}`));
+    for (const c of extraCells || []) water.add(`${c.x},${c.y}`);
+    let start = null, landCount = 0;
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      if (water.has(`${x},${y}`)) continue;
+      landCount++;
+      if (!start) start = [x, y];
+    }
+    if (landCount === 0) return false;
+    const seen = new Set([`${start[0]},${start[1]}`]);
+    const q = [start];
+    while (q.length) {
+      const [x, y] = q.pop();
+      for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+        const k = `${nx},${ny}`;
+        if (water.has(k) || seen.has(k)) continue;
+        seen.add(k); q.push([nx, ny]);
+      }
+    }
+    return seen.size === landCount;
+  }
+  // 스프링쿨러 '물 흩뿌리기': 판 전체에서 조건에 맞는 칸 중 랜덤으로 n칸을 물 웅덩이로 만든다
+  function sprinklePuddles(n) {
+    const made = [];
+    for (let i = 0; i < n; i++) {
+      const cands = [];
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+        if (isWaterPuddle(x, y)) continue;
+        if (players.some(p => p.x === x && p.y === y && !canStandOnWaterPuddle(p))) continue;
+        cands.push({ x, y });
+      }
+      // 무작위 순서로 섞은 뒤 연결 규칙을 만족하는 첫 칸을 고른다
+      for (let j = cands.length - 1; j > 0; j--) { const k = Math.floor(Math.random() * (j + 1)); [cands[j], cands[k]] = [cands[k], cands[j]]; }
+      const pick = cands.find(c => puddlesKeepLandConnected([c]));
+      if (!pick) break;
+      waterPuddles.push(pick);
+      made.push(pick);
+    }
+    return made;
   }
   // 샤워기 '웅덩이 만들기': 샤워기로부터 거리(맨해튼) 2칸 이내의 칸 중,
-  // 이미 웅덩이가 아니고 & 친수성 태그가 없는 말이 없는 칸만 후보로 반환
+  // 이미 웅덩이가 아니고 & 친수성 태그가 없는 말이 없고 & 설치 후에도 땅이 모두 이어지는 칸만 후보로 반환
   function getShowerPuddleCandidates(shower) {
     if (!shower) return [];
     const cells = [];
@@ -4298,6 +4456,7 @@ function performNinjaSwap(target) {
         if (isWaterPuddle(cx, cy)) continue;
         const blocked = players.some(p => p.x === cx && p.y === cy && !canStandOnWaterPuddle(p));
         if (blocked) continue;
+        if (!puddlesKeepLandConnected([{ x: cx, y: cy }])) continue;
         cells.push({ x: cx, y: cy });
       }
     }
@@ -4324,7 +4483,7 @@ function performNinjaSwap(target) {
     '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼','의사',
     '좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인', '응원단장',
     '트럭 운전사','블레이즈 & 엠버','블레이즈','엠버','비숍','샤워기',
-    '코끼리','고양이','개구리','인형사'
+    '코끼리','고양이','개구리','인형사','스프링쿨러','사냥꾼 상어'
   ]);
   return names.has(u.name);
 }
@@ -6048,7 +6207,7 @@ function askTycoonPlayerCountAndSetup() {
 const ALL_SPECIAL_NAMES = [
   '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼',
   '의사','좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인',
-  '응원단장','트럭 운전사','블레이즈 & 엠버','비숍','샤워기','인형사' // 산타클로스: 게임에서 제외
+  '응원단장','트럭 운전사','블레이즈 & 엠버','비숍','샤워기','인형사','스프링쿨러','사냥꾼 상어' // 산타클로스: 게임에서 제외
 ];
 
 // 팀 시작 좌표(왕/일반 병사 기준)
@@ -6069,12 +6228,12 @@ function createSpecialUnitByName(name, team) {
   switch (name) {
     case '저격수':   return { ...base, power: 1, range: 5, movement: 1, type: 'sniper' };
     case '기자':     return { ...base, power: 1, range: 0, movement: 1, type: 'journalist' };
-    case '고목':     return { ...base, power: 1, range: 1, movement: 1, type: 'gomok', _movedThisTurn: false, tags: ['특수 병사', '친수성'] };
+    case '고목':     return { ...base, power: 1, range: 1, movement: 1, type: 'gomok', _movedThisTurn: false, tags: ['특수 병사', '친수성+'] };
     case '사신':     return { ...base, power: 4, range: 4, movement: 4, type: 'reaper' };
     case '사육사':   return { ...base, power: 1, range: 0, movement: 1, type: 'zookeeper' };
     case '건축가':   return { ...base, power: 1, range: 0, movement: 1, type: 'architect' };
     case '닌자':     return { ...base, power: 0.5, range: 5, movement: 0.25, type: 'ninja' };
-    case '범고래':   return { ...base, power: 1, range: 1, movement: 1, type: 'orca', tags: ['특수 병사', '친수성'] };
+    case '범고래':   return { ...base, power: 1, range: 1, movement: 1, type: 'orca', tags: ['특수 병사', '친수성+'] };
     case '수레꾼':   return { ...base, power: 0.5, range: 0, movement: 1, type: 'cart' };
     case '의사':     return { ...base, power: 0, range: 2, movement: 1, type: 'doctor' };
     case '좀비':     return { ...base, power: 1, range: 0, movement: 0.5, type: 'zombie' };
@@ -6102,8 +6261,10 @@ function createSpecialUnitByName(name, team) {
       return createEmberUnit(team, p.x, p.y);
     }
       case '비숍':     return { ...base, power: 0.5, range: 0, movement: 1, type: 'bishop' };
-      case '샤워기':   return { ...base, power: 1, range: 1, movement: 1, type: 'shower', _usedThisTurn: false, tags: ['특수 병사', '친수성'] };
+      case '샤워기':   return { ...base, power: 1, range: 1, movement: 1, type: 'shower', _usedThisTurn: false, tags: ['특수 병사', '친수성+'] };
       case '인형사': return { ...base, power: 1, range: 0, movement: 0.5, type: 'puppeteer', _puppetSwapUses: 0 };
+      case '스프링쿨러': return { ...base, power: 0.5, range: 0, movement: 1, type: 'sprinkler' };
+      case '사냥꾼 상어': return { ...base, power: 7, range: 0, movement: 4, type: 'shark', tags: ['특수 병사', '친수성'], _sharkDashUsed: false, _sharkDiveUsed: false, _adrenaline: false };
     default:
       return null;
   }
@@ -7240,18 +7401,18 @@ const UNIT_INFO = {
     ['저격', '턴 수가 2의 배수일 때 사거리 안의 유닛 하나를 선택해 즉시 제거한다. 성공 확률은 15%이며, 움직이지 않은 턴 수만큼 +10%씩 증가한다(최대 75%). 움직이면 초기화된다.'] ] },
   '기자': { title: '기자', stats: [1, 0, 1], skills: [
     ['특종', '턴 수가 5의 배수일 때 원한다면 자신의 살아 있는 모든 캐릭터를 이 카드의 위치로 모은다.'] ] },
-  '고목': { title: '고목', tags: ['친수성'], stats: [1, 1, 1], skills: [
+  '고목': { title: '고목', tags: ['친수성+'], stats: [1, 1, 1], skills: [
     ['뿌리 내리기', '이 카드는 (이동하지 않은 턴 수 + 1)을 전투력과 사거리로 가진다. (최대 4)'] ] },
-  '고목*': { title: '고목★', evo: true, tags: ['친수성'], stats: [1, 1, 1], skills: [
+  '고목*': { title: '고목★', evo: true, tags: ['친수성+'], stats: [1, 1, 1], skills: [
     ['길고 빠르게 뿌리 내리기', '이 카드는 (이동하지 않은 턴 수 + 2)를 전투력과 사거리로 가진다. (최대 6)'] ] },
   '사신': { title: '사신', stats: [4, 4, 4], skills: [
     ['사의 기운', '이 카드가 살아 있는 한 자신의 주사위 눈을 4로 고정한다.'] ] },
   '사육사': { title: '사육사 (인간의 모습)', stats: [1, 0, 1], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습(코끼리·개구리·고양이)으로 바꿀 수 있다.'] ] },
-  '코끼리': { title: '사육사 (코끼리의 모습)', tags: ['친수성'], stats: [3, 1, 2], skills: [
+  '코끼리': { title: '사육사 (코끼리의 모습)', tags: ['친수성+'], stats: [3, 1, 2], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습으로 바꿀 수 있다.'],
     ['위대한 체급', '전투력 3, 사거리 1을 가진다.'] ] },
-  '개구리': { title: '사육사 (개구리의 모습)', tags: ['친수성'], stats: [0, 0, 1], skills: [
+  '개구리': { title: '사육사 (개구리의 모습)', tags: ['친수성+'], stats: [0, 0, 1], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습으로 바꿀 수 있다.'],
     ['위대한 울음소리', '주위 2칸 범위에 다른 참여자의 캐릭터가 진입하지 못하게 한다.'] ] },
   '고양이': { title: '사육사 (고양이의 모습)', stats: [0.9, 0, 1], skills: [
@@ -7259,10 +7420,10 @@ const UNIT_INFO = {
     ['위대한 생존력', '이 카드는 전투에서 져도 사망 처리되지 않고 왕이 있는 칸으로 간다.'] ] },
   '사육사*': { title: '사육사★ (인간의 모습)', evo: true, stats: [1, 0, 1], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습(코끼리·개구리·고양이)으로 바꿀 수 있다.'] ] },
-  '코끼리*': { title: '사육사★ (코끼리의 모습)', evo: true, tags: ['친수성'], stats: [3, 1, 2], skills: [
+  '코끼리*': { title: '사육사★ (코끼리의 모습)', evo: true, tags: ['친수성+'], stats: [3, 1, 2], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습으로 바꿀 수 있다.'],
-    ['웅덩이 만들기', '턴 수가 3의 배수일 때, 주변 2칸 안에서 친수성 태그가 없는 말이 없는 칸을 골라 물 웅덩이로 만든다. 물 웅덩이에는 친수성 태그가 있는 말만 들어갈 수 있고, 친수성 유닛은 물 웅덩이 위에서 전투력 +2, 사거리 +1이 된다.'] ] },
-  '개구리*': { title: '사육사★ (개구리의 모습)', evo: true, tags: ['친수성'], stats: [0, 0, 1], skills: [
+    ['웅덩이 만들기', '턴 수가 3의 배수일 때, 주변 2칸 안에서 친수성 태그가 없는 말이 없는 칸을 골라 물 웅덩이로 만든다. 단, 설치 후에도 물 웅덩이가 아닌 모든 칸이 서로 이어져 있어야 한다. 물 웅덩이에는 친수성/친수성+ 태그가 있는 말만 들어갈 수 있고, 친수성+ 유닛은 물 웅덩이 위에서 전투력 +2, 사거리 +1이 된다.'] ] },
+  '개구리*': { title: '사육사★ (개구리의 모습)', evo: true, tags: ['친수성+'], stats: [0, 0, 1], skills: [
     ['대신 싸우기', '턴 수가 2의 배수일 때 원한다면 다른 모습으로 바꿀 수 있다.'],
     ['위대한 울음소리', '주위 2칸 범위에 다른 참여자의 캐릭터가 진입하지 못하게 한다.'],
     ['독 제공', '자신의 다른 유닛이 이 유닛과 같은 칸에 잠시라도 있었다면, 그 유닛의 지원 전투력이 2배가 된다. 이 효과는 전투에 지원하면 사라진다.'] ] },
@@ -7276,7 +7437,7 @@ const UNIT_INFO = {
   '닌자*': { title: '닌자★', evo: true, stats: [0.5, 5, 0.25], skills: [
     ['침투', '이 카드가 있는 칸에 이 카드만 있고 턴 수가 3의 배수일 때 사용할 수 있다. 사거리 안에 있는 다른 참여자의 카드 하나를 골라 이 카드와 위치를 바꾼다.'],
     ['연막', '전투에서 패배해도 제거되지 않고, 주변 2칸 안의 점유되지 않은 랜덤한 칸으로 이동한다. 모두 점유되어 있다면 왕이 있는 칸으로 이동한다.'] ] },
-  '범고래': { title: '범고래', tags: ['친수성'], stats: [1, 1, 1], skills: [
+  '범고래': { title: '범고래', tags: ['친수성+'], stats: [1, 1, 1], skills: [
     ['파도 일으키기', '자신의 이동 에너지를 +1 한다.'] ] },
   '수레꾼': { title: '수레꾼', stats: [0.5, 0, 1], skills: [
     ['손님 받아라', '이 카드가 이동할 때 원한다면 같은 칸에 있는 다른 카드도 같이 이동한다.'] ] },
@@ -7319,14 +7480,21 @@ const UNIT_INFO = {
     ['대각선 질주', '자신의 차례에 한 번, 대각선으로 몇 칸이든 이동할 수 있다. 단, 병사가 있는 칸을 지나갈 수는 없다.'] ] },
   '비숍*': { title: '비숍★', evo: true, stats: [0.5, 0, 1], skills: [
     ['대각선 질주', '자신의 차례에 한 번, 대각선으로 몇 칸이든 이동할 수 있다. 단, 병사가 있는 칸을 지나갈 수는 없다. 이 스킬로 혼자 있는 다른 유닛과 같은 칸에 도착하면 그 유닛을 즉시 제거한다. (이번 차례에 이미 비숍을 움직였다면 적용되지 않는다)'] ] },
-  '샤워기': { title: '샤워기', tags: ['친수성'], stats: [1, 0, 1], skills: [
-    ['웅덩이 만들기', '턴 수가 3의 배수일 때, 주변 2칸 안에서 친수성 태그가 없는 말이 없는 칸을 골라 물 웅덩이로 만든다. 물 웅덩이에는 친수성 태그가 있는 말만 들어갈 수 있고, 친수성 유닛은 물 웅덩이 위에서 전투력 +2, 사거리 +1이 된다.'],
+  '샤워기': { title: '샤워기', tags: ['친수성+'], stats: [1, 0, 1], skills: [
+    ['웅덩이 만들기', '매 턴 한 번, 주변 2칸 안에서 친수성 태그가 없는 말이 없는 칸을 골라 물 웅덩이로 만든다. 단, 설치 후에도 물 웅덩이가 아닌 모든 칸이 서로 이어져 있어야 한다. 물 웅덩이에는 친수성/친수성+ 태그가 있는 말만 들어갈 수 있고, 친수성+ 유닛은 물 웅덩이 위에서 전투력 +2, 사거리 +1이 된다.'],
     ['수압 증가', '이 말이 물 웅덩이에 있으면 전투력이 4, 사거리가 3이 된다.'] ] },
   '인형사': { title: '인형사', stats: [1, 0, 0.5], skills: [
     ['끊어진 실', '이 유닛이 있을 때 전투에서 유닛이 제거되면, 제거된 유닛 중 랜덤한 하나의 실이 그 칸에 남는다.'],
     ['실 연결', "이 유닛이 있으면 자신의 모든 유닛 이름 뒤에 '인형'이 붙고 '실' 태그가 부여된다."],
     ['인형 제작', '실이 있는 칸에서 사용할 수 있다. 실의 주인이 일반 병사면 100%, 특수 병사면 30% 확률로 아군으로 만든다.'],
     ['인형 교체', "매 턴 2번 사용할 수 있다. 자신의 '실' 태그를 가진 유닛과 위치를 바꾼다."] ] },
+  '스프링쿨러': { title: '스프링쿨러', stats: [0.5, 0, 1], skills: [
+    ['물 흩뿌리기', '자신의 차례가 시작될 때 전체 게임판에서 랜덤으로 2칸을 물 웅덩이로 만든다. (물 웅덩이 설치 규칙을 따른다)'] ] },
+  '사냥꾼 상어': { title: '사냥꾼 상어', tags: ['친수성'], stats: [7, 0, 4], skills: [
+    ['돌진', '매 턴 한 번, 원하는 방향(상하좌우)으로 한 칸 움직일 수 있다. 이동 에너지를 쓰지 않는다.'],
+    ['수중 저항 감소', '물 웅덩이 위에서는 이동 능력이 1이 된다.'],
+    ['잠수 후 등장', '매 턴 한 번, 물 웅덩이 위에 있을 때 사용할 수 있다. 다른 물 웅덩이를 골라 그곳으로 이동한다.'],
+    ['아드레날린 폭발', '전투에서 승리하면 다음 자신의 차례가 시작되기 전까지 참여한 모든 전투에서 승리한다.'] ] },
 };
 // 유닛 → 설명 키 (폼트랜서는 변신 중이어도 폼트랜서로 표시)
 function unitInfoKey(u) {
@@ -8136,7 +8304,7 @@ function beginMerchantTrade(merchant) {
     const specialPool = [
       '저격수','기자','고목','사신','사육사','건축가','닌자','범고래','수레꾼',
       '의사','좀비','도박사','눈사람','폼트랜서','광대','스키퍼','여왕개미','상인',
-      '응원단장','트럭 운전사','블레이즈','엠버','개미','비숍','샤워기'
+      '응원단장','트럭 운전사','블레이즈','엠버','개미','비숍','샤워기','스프링쿨러','사냥꾼 상어'
     ];
     const pick = specialPool[Math.floor(Math.random() * specialPool.length)];
     newUnit = createSpecialUnitByName(pick, team);
@@ -8201,19 +8369,50 @@ if (name === '비숍' && unit.team === currentTurn) {
     // ⑬ 샤워기: 웅덩이 만들기 (거리 2칸 이내 중 선택)
     if (name === '샤워기' && unit.team === currentTurn) {
       const puddleCandidates = getShowerPuddleCandidates(unit);
-      const can = (currentRound % 3 === 0) && !unit._usedThisTurn && puddleCandidates.length > 0;
+      const can = !unit._usedThisTurn && puddleCandidates.length > 0;
       skills.push({
         icon: '🚿',
         unitName: '샤워기',
         skillName: '웅덩이 만들기',
-        description: "거리 2칸 이내의 칸 중, 친수성 태그가 없는 말이 없는 칸을 선택해 '물 웅덩이'로 만듭니다. 샤워기·개구리·고목·범고래·코끼리 외의 말은 물 웅덩이 위에 있을 수 없습니다.",
-        condition: '3턴마다 사용 가능',
+        description: "거리 2칸 이내의 칸 중, 친수성 태그가 없는 말이 없는 칸을 선택해 '물 웅덩이'로 만듭니다. 설치 후에도 물 웅덩이가 아닌 모든 칸이 서로 이어져 있어야 합니다. 친수성/친수성+ 태그가 없는 말은 물 웅덩이 위에 있을 수 없습니다.",
+        condition: '매 턴 1회',
         available: can,
         execute: () => {
           showerPuddlePick.active = true;
           showerPuddlePick.showerId = unit.id;
           if (popup) popup.style.display = 'none';
           status && (status.textContent = '🚿 물 웅덩이를 만들 칸을 클릭하세요 (거리 2칸 이내)');
+        }
+      });
+    }
+    // ⑬-2 사냥꾼 상어: 돌진 / 잠수 후 등장
+    if (name === '사냥꾼 상어' && unit.team === currentTurn) {
+      const dashCells = getSharkDashCells(unit);
+      skills.push({
+        icon: '🦈',
+        unitName: '사냥꾼 상어',
+        skillName: '돌진',
+        description: '원하는 방향(상하좌우)으로 한 칸 움직입니다. 이동 에너지를 쓰지 않습니다.',
+        condition: '매 턴 1회',
+        available: !unit._sharkDashUsed && dashCells.length > 0,
+        execute: () => {
+          sharkPick.active = true; sharkPick.unitId = unit.id; sharkPick.mode = 'dash';
+          if (popup) popup.style.display = 'none';
+          status && (status.textContent = '🦈 돌진할 칸(상하좌우 한 칸)을 클릭하세요');
+        }
+      });
+      const diveCells = getSharkDiveCells(unit);
+      skills.push({
+        icon: '🌊',
+        unitName: '사냥꾼 상어',
+        skillName: '잠수 후 등장',
+        description: '물 웅덩이 위에 있을 때 사용할 수 있습니다. 다른 물 웅덩이를 골라 그곳으로 이동합니다.',
+        condition: '매 턴 1회 · 물 웅덩이 위',
+        available: !unit._sharkDiveUsed && isWaterPuddle(unit.x, unit.y) && diveCells.length > 0,
+        execute: () => {
+          sharkPick.active = true; sharkPick.unitId = unit.id; sharkPick.mode = 'dive';
+          if (popup) popup.style.display = 'none';
+          status && (status.textContent = '🌊 이동할 다른 물 웅덩이를 클릭하세요');
         }
       });
     }
@@ -8331,7 +8530,7 @@ if (name === '비숍' && unit.team === currentTurn) {
         icon: '🚿',
         unitName: '코끼리',
         skillName: '웅덩이 만들기',
-        description: "샤워기의 '웅덩이 만들기'와 동일합니다. 거리 2칸 이내의 칸 중, 친수성 태그가 없는 말이 없는 칸을 선택해 '물 웅덩이'로 만듭니다.",
+        description: "거리 2칸 이내의 칸 중, 친수성 태그가 없는 말이 없는 칸을 선택해 '물 웅덩이'로 만듭니다. 설치 후에도 물 웅덩이가 아닌 모든 칸이 서로 이어져 있어야 합니다.",
         condition: '3턴마다 사용 가능',
         available: can2,
         execute: () => {
@@ -8570,7 +8769,7 @@ function executeSkill(skill) {
   if (skill.execute) {
     skill.execute();
     // 비숍/인형 교체처럼 후속 클릭·선택을 기다리는 스킬은 자체 안내 문구를 유지시킨다
-    if (!bishopDash.active && !puppetSwap.active && !showerPuddlePick.active && !sniperShot.active) {
+    if (!bishopDash.active && !puppetSwap.active && !showerPuddlePick.active && !sniperShot.active && !sharkPick.active) {
       status && (status.textContent = `${skill.icon} ${skill.unitName} — ${skill.skillName} 사용!`);
     }
     drawBoard?.();
