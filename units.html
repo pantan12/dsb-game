@@ -17,6 +17,8 @@
   --gold-soft: #f4e7cf;
   --water: #0b6f86;
   --water-soft: #d6eef2;
+  --trait: #b4232f;
+  --trait-soft: #f8dcdc;
   --bar: #c9cfc5;
   --font-display: "Black Han Sans", "IBM Plex Sans KR", sans-serif;
   --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
@@ -25,12 +27,12 @@
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #131714; --surface: #1c211d; --ink: #e6ebe5; --muted: #9aa69d; --line: #2e3530;
   --accent: #8fb6e0; --accent-soft: #1f2d3c; --gold: #e3a94f; --gold-soft: #3a2d17;
-  --water: #5cc3d6; --water-soft: #15323a; --bar: #343c36; color-scheme: dark;
+  --water: #5cc3d6; --water-soft: #15323a; --trait: #f08a8f; --trait-soft: #3b1a1c; --bar: #343c36; color-scheme: dark;
 } }
 :root[data-theme="dark"] {
   --bg: #131714; --surface: #1c211d; --ink: #e6ebe5; --muted: #9aa69d; --line: #2e3530;
   --accent: #8fb6e0; --accent-soft: #1f2d3c; --gold: #e3a94f; --gold-soft: #3a2d17;
-  --water: #5cc3d6; --water-soft: #15323a; --bar: #343c36; color-scheme: dark;
+  --water: #5cc3d6; --water-soft: #15323a; --trait: #f08a8f; --trait-soft: #3b1a1c; --bar: #343c36; color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body {
@@ -76,6 +78,7 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .card-head h3 { font-family: var(--font-display); font-weight: 400; font-size: 21px; margin: 0; margin-right: 4px; }
 .badge { font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; letter-spacing: 0.02em; }
 .b-water { background: var(--water-soft); color: var(--water); }
+.b-trait { background: var(--trait-soft); color: var(--trait); }
 .b-evo { background: var(--gold-soft); color: var(--gold); }
 .b-kind { background: var(--accent-soft); color: var(--accent); }
 
@@ -121,6 +124,7 @@ footer { color: var(--muted); font-size: 12.5px; }
       <span><b style="color:var(--gold)">★</b> 진화 가능 (7종)</span>
       <span><b style="color:var(--water)">친수성</b> 물 웅덩이 위에 올라갈 수 있음</span>
       <span><b style="color:var(--water)">친수성+</b> 물 웅덩이 위에 올라갈 수 있고, 웅덩이 위·주변 1칸에서 전투력 +2 / 사거리 +1</span>
+      <span><b style="color:var(--trait)">아드레날린 폭발</b> 전투에서 승리하면 다음 자신의 차례가 시작되기 전까지 참여한 모든 전투에서 승리 (발동 중 전투력 ∞ 표시)</span>
       <span><b>물 웅덩이 설치 규칙</b> 설치 후에도 물 웅덩이가 아닌 모든 칸이 서로 이어져 있어야 함</span>
     </div>
   </header>
@@ -233,11 +237,10 @@ const UNITS = [
       ['인형 교체', "매 턴 2번 사용할 수 있다. 자신의 '실' 태그를 가진 유닛과 위치를 바꾼다."] ] },
   { name: '스프링쿨러', stats: [0.5, 0, 1], skills: [
       ['물 흩뿌리기', '자신의 차례가 시작될 때 전체 게임판에서 랜덤으로 2칸을 물 웅덩이로 만든다. (물 웅덩이 설치 규칙을 따른다)', 1] ] },
-  { name: '사냥꾼 상어', tags: ['친수성'], stats: [7, 0, 4], skills: [
+  { name: '사냥꾼 상어', tags: ['친수성', '아드레날린 폭발'], stats: [7, 0, 4], skills: [
       ['돌진', '매 턴 한 번, 원하는 방향(상하좌우)으로 한 칸 움직일 수 있다. 이동 에너지를 쓰지 않는다.', 1],
       ['수중 저항 감소', '물 웅덩이 위에서는 이동 능력이 1이 된다.'],
-      ['잠수 후 등장', '매 턴 한 번, 물 웅덩이 위에 있을 때 사용할 수 있다. 다른 물 웅덩이를 골라 그곳으로 이동한다.', 1],
-      ['아드레날린 폭발', '전투에서 승리하면 다음 자신의 차례가 시작되기 전까지 참여한 모든 전투에서 승리한다. 발동 중에는 전투력이 ∞로 표시된다.'] ] },
+      ['잠수 후 등장', '매 턴 한 번, 물 웅덩이 위에 있을 때 사용할 수 있다. 다른 물 웅덩이를 골라 그곳으로 이동한다.', 1] ] },
 ];
 
 const MAX = 4;
@@ -260,7 +263,7 @@ function skillsHTML(list) {
   if (!list || !list.length) return '<div class="none">스킬 없음</div>';
   return `<div class="skills">${list.map(([n, t, trig, isNew]) => `<div class="skill"><span class="skill-name">${esc(n)}${trig ? `<span class="trig">${trig === 1 ? '매 턴' : trig + '의 배수 턴'}</span>` : ''}${isNew ? '<span class="new">진화 추가</span>' : ''}</span><p>${t}</p></div>`).join('')}</div>`;
 }
-function tagsHTML(tags) { return (tags || []).map(t => `<span class="badge b-water">${esc(t)}</span>`).join(''); }
+function tagsHTML(tags) { return (tags || []).map(t => `<span class="badge ${WATER_TAGS.includes(t) ? 'b-water' : 'b-trait'}">${esc(t)}</span>`).join(''); }
 function evoHTML(e, title) {
   return `<details class="evo"><summary>★ 진화: ${esc(title)}</summary><div class="evo-body">${e.note ? `<div class="none">${esc(e.note)}</div>` : ''}${e.stats ? statsHTML(e.stats) : ''}${e.skills ? skillsHTML(e.skills) : ''}</div></details>`;
 }
