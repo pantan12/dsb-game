@@ -117,7 +117,7 @@ footer { color: var(--muted); font-size: 12.5px; }
     <div class="legend">
       <span><b>전투력</b> 전투 시 기본 힘</span>
       <span><b>사거리</b> 지원 가능한 거리</span>
-      <span><b>이동 능력</b> 주사위 1당 이동량 배율</span>
+      <span><b>이동 능력</b> 주사위 1당 이동량 배율 (작을수록 좋음 · 게이지가 길수록 좋음)</span>
       <span><b style="color:var(--gold)">★</b> 진화 가능 (7종)</span>
       <span><b style="color:var(--water)">친수성</b> 물 웅덩이 위에 올라갈 수 있음</span>
       <span><b style="color:var(--water)">친수성+</b> 물 웅덩이 위에 올라갈 수 있고, 웅덩이 위·주변 1칸에서 전투력 +2 / 사거리 +1</span>
@@ -250,7 +250,11 @@ const isWater = (u) => (u.tags || []).some(t => WATER_TAGS.includes(t)) || (u.fo
 function statsHTML(s) {
   if (!s) return '';
   const labels = ['전투력', '사거리', '이동 능력'];
-  return `<div class="stats">${s.map((v, i) => `<div class="stat"><div class="stat-top"><span>${labels[i]}</span><b>${v}</b></div><div class="meter"><i style="width:${Math.min(100, v / MAX * 100)}%"></i></div></div>`).join('')}</div>`;
+  // 이동 능력은 작을수록 좋음 → 게이지를 뒤집음 (0.25 = 가득, 4 = 거의 비어 있음, 2배 단위 로그 스케일)
+  const fill = (v, i) => i === 2
+    ? Math.max(0, Math.min(100, 12 + 88 * (2 - Math.log2(v)) / 4))
+    : Math.min(100, v / MAX * 100);
+  return `<div class="stats">${s.map((v, i) => `<div class="stat"><div class="stat-top"><span>${labels[i]}${i === 2 ? ' <small style="opacity:.6;font-weight:400">↓좋음</small>' : ''}</span><b>${v}</b></div><div class="meter"><i style="width:${fill(v, i)}%"></i></div></div>`).join('')}</div>`;
 }
 function skillsHTML(list) {
   if (!list || !list.length) return '<div class="none">스킬 없음</div>';
